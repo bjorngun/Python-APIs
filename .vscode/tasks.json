@@ -1,0 +1,120 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Create virtual environment (Windows)",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "if not exist \"${workspaceFolder}\\venv\" (python -m venv ${workspaceFolder}\\venv)"
+            ],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Delete venv folder",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "rmdir /s /q ${workspaceFolder}\\venv"
+            ],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Upgrade pip",
+            "type": "shell",
+            "command": "${workspaceFolder}/venv/Scripts/python.exe",
+            "args": ["-m", "pip", "install", "--upgrade", "pip"],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "dependsOn": "Create virtual environment (Windows)"
+        },
+        {
+            "label": "Install requirements",
+            "type": "shell",
+            "command": "${workspaceFolder}/venv/Scripts/python.exe",
+            "args": ["-m", "pip", "install", "-e", "."],
+            "problemMatcher": [],
+            "dependsOn": "Upgrade pip"
+        },
+        {
+            "label": "Install test requirements",
+            "type": "shell",
+            "command": "${workspaceFolder}/venv/Scripts/python.exe",
+            "args": ["-m", "pip", "install", ".[test]"],
+            "problemMatcher": [],
+            "dependsOn": "Install requirements"
+        },
+        {
+            "label": "Install lint requirements",
+            "type": "shell",
+            "command": "${workspaceFolder}/venv/Scripts/python.exe",
+            "args": ["-m", "pip", "install", ".[lint]"],
+            "problemMatcher": [],
+            "dependsOn": "Install requirements"
+        },
+        {
+            "label": "Run tests with coverage",
+            "type": "shell",
+            "command": "${workspaceFolder}/venv/Scripts/python",
+            "args": [
+                "-m",
+                "coverage",
+                "run",
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "src/tests",
+                "-p",
+                "test_*.py"
+            ],
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "Generate coverage report",
+            "type": "shell",
+            "command": "${workspaceFolder}/venv/Scripts/python",
+            "args": [
+                "-m",
+                "coverage",
+                "html"
+            ],
+            "problemMatcher": [],
+            "dependsOn": "Run tests with coverage"
+        },
+        {
+            "label": "Open coverage report in browser",
+            "type": "shell",
+            "command": "${workspaceFolder}/venv/Scripts/python",
+            "args": [
+                "-m",
+                "webbrowser",
+                "file://${workspaceFolder}/htmlcov/index.html"
+            ],
+            "problemMatcher": [],
+            "dependsOn": "Generate coverage report"
+        },
+        {
+            "label": "Clean rebuild",
+            "type": "shell",
+            "command": "${workspaceFolder}/venv/Scripts/python.exe",
+            "args": ["-m", "pip", "install", ".[test]"],
+            "problemMatcher": [],
+            "dependsOn": "Install requirements"
+        }
+    ]
+}

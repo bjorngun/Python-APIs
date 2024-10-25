@@ -1,3 +1,0 @@
-[flake8]
-exclude = ".git,.tox,./tests/.env"
-max-line-length = 88

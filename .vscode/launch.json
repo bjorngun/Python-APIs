@@ -1,0 +1,61 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Run All Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "unittest",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+            "args": [
+                "discover",
+                "-s",
+                "src/tests",
+                "-p",
+                "test_*.py"
+            ]
+        },
+        {
+            "name": "Python: Run Pylint",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/venv/Scripts/pylint.exe",
+            "args": [
+                "${workspaceFolder}/src"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "preLaunchTask": "Install lint requirements"
+        },
+        {
+            "name": "Run Tests with Codecov and Generate HTML Coverage Report",
+            "type": "debugpy",
+            "request": "launch",
+            "code": "print('No-OP')",
+            "preLaunchTask": "Generate coverage report"
+        },
+        {
+            "name": "Clean rebuild and test - re-install python and packages (WARNING: code could possibly not support new packages or newer version of python)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "unittest",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+            "args": [
+                "discover",
+                "-s",
+                "src/tests",
+                "-p",
+                "test_*.py"
+            ],
+            "preLaunchTask": "Clean rebuild"
+        }
+    ]
+}

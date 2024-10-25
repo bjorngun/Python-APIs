@@ -1,0 +1,20 @@
+[
+    "sAMAccountName",
+    "distinguishedName",
+    "name",
+    "title",
+    "employeeID",
+    "employeeNumber",
+    "department",
+    "division",
+    "company",
+    "departmentNumber",
+    "mail",
+    "extensionAttribute7",
+    "manager",
+    "userAccountControl",
+    "facsimileTelephoneNumber",
+    "streetAddress",
+    "postalAddress",
+    "postalCode"
+]

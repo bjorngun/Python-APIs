@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'python_apis'
-version = '0.1.0'
+version = '0.1.1'
 authors = [
   { name="Björn Gunnarsson", email="bjorngun@kopavogur.is" },
 ]
@@ -36,6 +36,10 @@ test = [
 lint = [
     'pylint',
 ]
+
+[project.urls]
+Source = 'https://github.com/Kopavogur/Python-APIs'
+Tracker = 'https://github.com/Kopavogur/Python-APIs/issues'
 
 [tool.setuptools]
 packages = { find = { where = ["src"] } }

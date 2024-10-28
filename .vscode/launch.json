@@ -25,11 +25,12 @@
             "request": "launch",
             "program": "${workspaceFolder}/venv/Scripts/pylint.exe",
             "args": [
-                "${workspaceFolder}/src"
+                "${workspaceFolder}/src/apis",
+                "${workspaceFolder}/src/models",
+                "${workspaceFolder}/src/services"
             ],
             "console": "integratedTerminal",
-            "justMyCode": true,
-            "preLaunchTask": "Install lint requirements"
+            "justMyCode": true
         },
         {
             "name": "Run Tests with Codecov and Generate HTML Coverage Report",

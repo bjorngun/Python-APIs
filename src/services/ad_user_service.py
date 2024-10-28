@@ -34,7 +34,7 @@ class ADUserService:
         if ad_connection is None:
             ad_connection = self._get_ad_connection()
         self.ad_connection = ad_connection
-    
+
     def _get_sql_connection(self) -> SQLConnection:
         return SQLConnection(
             server=os.getenv('ADUSER_DB_SERVER'),
@@ -59,7 +59,7 @@ class ADUserService:
         Returns:
             list[ADUser]: A list of all ADUser in the database.
         """
-        
+
         ad_users = self.sql_connection.session.query(ADUser).all()
         return ad_users
 
@@ -133,13 +133,13 @@ class ADUserService:
             json_file_path = os.path.join(current_dir, filename)
 
             try:
-                with open(json_file_path, 'r') as f:
+                with open(json_file_path, 'r', encoding='UTF-8') as f:
                     cache = json.load(f)
                     setattr(ADUserService, cache_attr, cache)
-            except FileNotFoundError:
-                raise FileNotFoundError(f"JSON file not found at {json_file_path}")
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Error decoding JSON file '{filename}': {e}")
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(f"JSON file not found at {json_file_path}") from exc
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Error decoding JSON file '{filename}': {exc}") from exc
 
         return cache
 

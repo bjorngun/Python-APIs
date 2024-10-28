@@ -37,7 +37,7 @@ jobs:
         pip install pylint
     - name: Run pylint
       run: |
-        pylint src/dev_tools/
+        pylint src/apis/ src/models/ src/services/
 
   test:
     runs-on: ${{ matrix.os }}

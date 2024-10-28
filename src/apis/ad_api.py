@@ -31,7 +31,7 @@ class ADConnection:
 
         tls = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
         ldap_servers = [Server(x, use_ssl=True, tls=tls) for x in servers]
-        
+
         server_pool = ServerPool(ldap_servers, ROUND_ROBIN, active=True, exhaust=True)
         connection = Connection(
             server_pool,
@@ -90,15 +90,15 @@ class ADConnection:
         search_result = self.search(search_filter, attributes)
         return search_result[0] if len(search_result) > 0 else collections.defaultdict(lambda: '')
 
-    def modify(self, distinguished_name: str, changes: dict[str, str]) -> dict[str, Any]:
+    def modify(self, distinguished_name: str, changes: list[tuple[str, str]]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of changes.
 
         Example:
-            modify(user_distinguishedName, {'departmentNumber': '11122'})
+            modify(user_distinguishedName, [('departmentNumber': '11122')])
 
         Args:
             distinguished_name (str): A distinguished name of a AD User.
-            changes (dict[str, str]): {'AD field name': 'new field value'}
+            changes (list[tuple[str, str]]): [('AD field name': 'new field value')]
 
         Returns:
             dict[str, Any]: The result from the attempted modification
@@ -163,8 +163,8 @@ class ADConnection:
         return self.add_value(group_dn, changes)
 
     def remove_member(self, user_dn: str, group_dn: str):
-        """Takes in a user distinguishedName and a group distinguishedName removes the specified user
-        from the group in AD.
+        """Takes in a user distinguishedName and a group distinguishedName removes the specified
+        user from the group in AD.
 
         Args:
             user_dn (str): AD user distinguishedName

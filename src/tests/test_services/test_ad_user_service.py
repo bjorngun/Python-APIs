@@ -24,7 +24,7 @@ class TestADUserService(unittest.TestCase):
             'LDAP_SERVER_LIST': 'ldap://server1 ldap://server2',
             'SEARCH_BASE': 'dc=example,dc=com',
         }.get(key, None)
-        
+
         # Mock ADConnection and SQLConnection classes
         self.patcher_ad_connection = patch('services.ad_user_service.ADConnection')
         self.mock_ad_connection_cls = self.patcher_ad_connection.start()

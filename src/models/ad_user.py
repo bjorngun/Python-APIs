@@ -17,7 +17,7 @@ Usage Example:
     session = Session(engine)
 
     # Query for a user
-    user = session.query(ADUser).filter_by(sam_account_name='jdoe').first()
+    user = session.query(ADUser).filter_by(sam_account_name='jon_doe').first()
 
     # Access user attributes
     print(user.display_name)

@@ -6,8 +6,8 @@ import json
 import os
 from typing import Any, Optional
 
+from models import ADUser
 from apis import ADConnection, SQLConnection
-from models.ad_user import ADUser
 
 class ADUserService:
     """Service class for interacting with Active Directory users.

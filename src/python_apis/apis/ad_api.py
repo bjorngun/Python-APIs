@@ -104,7 +104,7 @@ class ADConnection:
             dict[str, Any]: The result from the attempted modification
         """
 
-        changes = {key: [MODIFY_REPLACE, value] for key, value in changes.items()}
+        changes = {key: [MODIFY_REPLACE, value] for key, value in changes}
         success = self.ad_connection.modify(distinguished_name, changes)
         return {'result': self.ad_connection.result, 'success': success}
 

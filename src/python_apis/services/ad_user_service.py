@@ -10,9 +10,9 @@ from typing import Any, Optional
 from pydantic import ValidationError
 from dev_tools import timing_decorator
 
-from apis import ADConnection, SQLConnection
-from models import ADUser
-from schemas import ADUserSchema
+from ..apis import ADConnection, SQLConnection
+from ..models import ADUser
+from ..schemas import ADUserSchema
 
 class ADUserService:
     """Service class for interacting with Active Directory users.

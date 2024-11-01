@@ -62,8 +62,7 @@
             "type": "shell",
             "command": "${workspaceFolder}/venv/Scripts/python.exe",
             "args": ["-m", "pip", "install", ".[lint]"],
-            "problemMatcher": [],
-            "dependsOn": "Install requirements"
+            "problemMatcher": []
         },
         {
             "label": "Run tests with coverage",

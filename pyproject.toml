@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'python_apis'
-version = '0.2.0'
+version = '0.2.1'
 authors = [
   { name="Björn Gunnarsson", email="bjorngun@kopavogur.is" },
 ]
@@ -29,6 +29,7 @@ dependencies = [
     'winkerberos',
     'cryptography',
     'unidecode',
+    'pydantic',
 ]
 
 [project.optional-dependencies]
@@ -38,6 +39,10 @@ test = [
 lint = [
     'pylint',
     'pylint-pydantic',
+]
+publish = [
+    "twine",
+    "build"
 ]
 
 [project.urls]

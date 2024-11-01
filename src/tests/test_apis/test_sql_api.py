@@ -1,13 +1,13 @@
 import unittest
 from unittest.mock import patch, MagicMock
 from sqlalchemy.exc import SQLAlchemyError
-from apis.sql_api import SQLConnection
+from python_apis.apis.sql_api import SQLConnection
 
 class TestSQLConnection(unittest.TestCase):
     def setUp(self):
         # Mock create_engine and sessionmaker to avoid real database connections
-        self.patcher_engine = patch('apis.sql_api.create_engine')
-        self.patcher_sessionmaker = patch('apis.sql_api.sessionmaker')
+        self.patcher_engine = patch('python_apis.apis.sql_api.create_engine')
+        self.patcher_sessionmaker = patch('python_apis.apis.sql_api.sessionmaker')
         self.mock_create_engine = self.patcher_engine.start()
         self.mock_sessionmaker = self.patcher_sessionmaker.start()
         self.addCleanup(self.patcher_engine.stop)

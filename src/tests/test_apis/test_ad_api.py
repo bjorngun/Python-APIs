@@ -4,12 +4,12 @@ import collections
 import ssl
 
 from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, ALL_ATTRIBUTES, SUBTREE
-from apis.ad_api import ADConnection
+from python_apis.apis.ad_api import ADConnection
 
 class TestADConnection(unittest.TestCase):
     def setUp(self):
         # Mock the Connection class to avoid real LDAP connections
-        patcher = patch('apis.ad_api.Connection')
+        patcher = patch('python_apis.apis.ad_api.Connection')
         self.addCleanup(patcher.stop)
         self.mock_connection_cls = patcher.start()
         self.mock_connection = MagicMock()
@@ -17,10 +17,10 @@ class TestADConnection(unittest.TestCase):
         self.mock_connection.bind.return_value = True
 
 
-    @patch('apis.ad_api.ServerPool')
-    @patch('apis.ad_api.Server')
-    @patch('apis.ad_api.Connection')
-    @patch('apis.ad_api.Tls')
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    @patch('python_apis.apis.ad_api.Connection')
+    @patch('python_apis.apis.ad_api.Tls')
     def test_get_ad_connection(self, mock_tls, mock_connection_cls, mock_server_cls, mock_server_pool):
         # Arrange
         servers = ['ldap://server1', 'ldap://server2']
@@ -36,7 +36,7 @@ class TestADConnection(unittest.TestCase):
         mock_connection_cls.return_value = mock_connection
 
         # Mock _get_ad_connection during initialization
-        with patch('apis.ad_api.ADConnection._get_ad_connection') as mock_get_ad_connection:
+        with patch('python_apis.apis.ad_api.ADConnection._get_ad_connection') as mock_get_ad_connection:
             mock_get_ad_connection.return_value = mock_connection
             ad_conn = ADConnection(servers, search_base)
 
@@ -64,7 +64,7 @@ class TestADConnection(unittest.TestCase):
         mock_connection.bind.assert_called_once()
         self.assertEqual(connection, mock_connection)
 
-    @patch('apis.ad_api.ADConnection._get_paged_search')
+    @patch('python_apis.apis.ad_api.ADConnection._get_paged_search')
     def test_search(self, mock_get_paged_search):
         # Initialize ADConnection here
         servers = ['ldap://server1', 'ldap://server2']
@@ -148,7 +148,7 @@ class TestADConnection(unittest.TestCase):
         expected_result = {'result': {'description': 'success'}, 'success': True}
         self.assertEqual(result, expected_result)
 
-    @patch('apis.ad_api.ADConnection.add_value')
+    @patch('python_apis.apis.ad_api.ADConnection.add_value')
     def test_add_member(self, mock_add_value):
         # Initialize ADConnection here
         servers = ['ldap://server1', 'ldap://server2']
@@ -167,7 +167,7 @@ class TestADConnection(unittest.TestCase):
         mock_add_value.assert_called_once_with(group_dn, {'member': user_dn})
         self.assertEqual(result, {'result': {'description': 'success'}, 'success': True})
 
-    @patch('apis.ad_api.ADConnection.remove_value')
+    @patch('python_apis.apis.ad_api.ADConnection.remove_value')
     def test_remove_member(self, mock_remove_value):
         # Initialize ADConnection here
         servers = ['ldap://server1', 'ldap://server2']

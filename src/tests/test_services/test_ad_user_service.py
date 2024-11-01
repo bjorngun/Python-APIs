@@ -6,9 +6,9 @@ import json
 import os
 
 # Adjust the import based on your project structure
-from services.ad_user_service import ADUserService
-from models.ad_user import ADUser
-from schemas.ad_user_schema import ADUserSchema
+from python_apis.services.ad_user_service import ADUserService
+from python_apis.models.ad_user import ADUser
+from python_apis.schemas.ad_user_schema import ADUserSchema
 from pydantic import ValidationError
 
 class TestADUserService(unittest.TestCase):
@@ -31,11 +31,11 @@ class TestADUserService(unittest.TestCase):
         self.mock_getenv.side_effect = lambda key, default=None: env_vars.get(key, default)
 
         # Mock ADConnection and SQLConnection classes
-        self.patcher_ad_connection = patch('services.ad_user_service.ADConnection')
+        self.patcher_ad_connection = patch('python_apis.services.ad_user_service.ADConnection')
         self.mock_ad_connection_cls = self.patcher_ad_connection.start()
         self.addCleanup(self.patcher_ad_connection.stop)
 
-        self.patcher_sql_connection = patch('services.ad_user_service.SQLConnection')
+        self.patcher_sql_connection = patch('python_apis.services.ad_user_service.SQLConnection')
         self.mock_sql_connection_cls = self.patcher_sql_connection.start()
         self.addCleanup(self.patcher_sql_connection.stop)
 
@@ -107,9 +107,9 @@ class TestADUserService(unittest.TestCase):
         self.mock_ad_connection.search.return_value = ad_user_data
 
         # Mock ADUser.get_attribute_list
-        with patch('models.ad_user.ADUser.get_attribute_list', return_value=['attr1', 'attr2']) as mock_get_attr_list:
+        with patch('python_apis.models.ad_user.ADUser.get_attribute_list', return_value=['attr1', 'attr2']) as mock_get_attr_list:
             # Mock ADUserSchema to bypass actual validation
-            with patch('schemas.ad_user_schema.ADUserSchema', side_effect=lambda **kwargs: MagicMock(**kwargs)) as mock_schema:
+            with patch('python_apis.schemas.ad_user_schema.ADUserSchema', side_effect=lambda **kwargs: MagicMock(**kwargs)) as mock_schema:
                 # Call get_users_from_ad
                 users = service.get_users_from_ad()
 
@@ -273,7 +273,7 @@ class TestADUserService(unittest.TestCase):
         self.mock_ad_connection.search.return_value = ad_user_data
 
         # Mock ADUser.get_attribute_list
-        with patch('models.ad_user.ADUser.get_attribute_list', return_value=['attr1', 'attr2']):
+        with patch('python_apis.models.ad_user.ADUser.get_attribute_list', return_value=['attr1', 'attr2']):
             # Call get_users_from_ad
             with patch('logging.Logger.error') as mock_logger_error:
                 users = service.get_users_from_ad()
@@ -302,7 +302,7 @@ class TestADUserService(unittest.TestCase):
         self.mock_ad_connection.search.return_value = ad_user_data
 
         # Mock ADUser.get_attribute_list
-        with patch('models.ad_user.ADUser.get_attribute_list', return_value=attributes):
+        with patch('python_apis.models.ad_user.ADUser.get_attribute_list', return_value=attributes):
             # Call get_users_from_ad
             users = service.get_users_from_ad()
 

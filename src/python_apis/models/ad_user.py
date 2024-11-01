@@ -50,7 +50,7 @@ from typing import Optional, ClassVar
 from sqlalchemy import Boolean, Column, Integer, String
 from sqlalchemy.dialects.mssql import DATETIME2
 
-from models.base import Base
+from .base import Base
 
 
 class ADUser(Base):

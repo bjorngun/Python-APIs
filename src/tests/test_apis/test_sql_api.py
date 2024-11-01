@@ -21,12 +21,12 @@ class TestSQLConnection(unittest.TestCase):
 
     def test_init(self):
         # Arrange
-        driver = 'ODBC Driver 17 for SQL Server'
         server = 'localhost'
         database = 'test_db'
+        driver = 'ODBC Driver 17 for SQL Server'
         
         # Act
-        sql_conn = SQLConnection(driver, server, database)
+        sql_conn = SQLConnection(server, database, driver)
         
         # Assert
         expected_connection_string = (f"mssql+pyodbc://@{server}/{database}"

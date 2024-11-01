@@ -1,13 +1,15 @@
 # File: src/tests/services/test_ad_user_service.py
 
 import unittest
-from unittest.mock import patch, MagicMock, mock_open, call
+from unittest.mock import patch, MagicMock, mock_open
 import json
 import os
 
 # Adjust the import based on your project structure
-from services import ADUserService
+from services.ad_user_service import ADUserService
 from models.ad_user import ADUser
+from schemas.ad_user_schema import ADUserSchema
+from pydantic import ValidationError
 
 class TestADUserService(unittest.TestCase):
     def setUp(self):
@@ -17,13 +19,16 @@ class TestADUserService(unittest.TestCase):
         self.addCleanup(self.patcher_getenv.stop)
 
         # Set up environment variables
-        self.mock_getenv.side_effect = lambda key: {
+        env_vars = {
             'ADUSER_DB_SERVER': 'test_server',
             'ADUSER_DB_NAME': 'test_db',
             'ADUSER_SQL_DRIVER': 'test_driver',
             'LDAP_SERVER_LIST': 'ldap://server1 ldap://server2',
             'SEARCH_BASE': 'dc=example,dc=com',
-        }.get(key, None)
+            'TIMING': 'False',  # Add TIMING variable if necessary
+        }
+
+        self.mock_getenv.side_effect = lambda key, default=None: env_vars.get(key, default)
 
         # Mock ADConnection and SQLConnection classes
         self.patcher_ad_connection = patch('services.ad_user_service.ADConnection')
@@ -66,7 +71,11 @@ class TestADUserService(unittest.TestCase):
         # Mock the SQL session query
         mock_query = MagicMock()
         self.mock_sql_connection.session.query.return_value = mock_query
-        mock_query.all.return_value = ['user1', 'user2']
+
+        # Create sample users
+        user1 = MagicMock(spec=ADUser)
+        user2 = MagicMock(spec=ADUser)
+        mock_query.all.return_value = [user1, user2]
 
         # Call get_users
         users = service.get_users()
@@ -76,7 +85,44 @@ class TestADUserService(unittest.TestCase):
         mock_query.all.assert_called_once()
 
         # Verify the result
-        self.assertEqual(users, ['user1', 'user2'])
+        self.assertEqual(users, [user1, user2])
+
+    def test_get_users_from_ad(self):
+        # Initialize the service
+        service = ADUserService()
+
+        # Mock the ad_connection.search method
+        ad_user_data = [
+            {
+                'sAMAccountName': 'user1',
+                'distinguishedName': 'dn1',
+                'userPrincipalName': 'user1@example.com'
+            },
+            {
+                'sAMAccountName': 'user2',
+                'distinguishedName': 'dn2',
+                'userPrincipalName': 'user2@example.com'
+            },
+        ]
+        self.mock_ad_connection.search.return_value = ad_user_data
+
+        # Mock ADUser.get_attribute_list
+        with patch('models.ad_user.ADUser.get_attribute_list', return_value=['attr1', 'attr2']) as mock_get_attr_list:
+            # Mock ADUserSchema to bypass actual validation
+            with patch('schemas.ad_user_schema.ADUserSchema', side_effect=lambda **kwargs: MagicMock(**kwargs)) as mock_schema:
+                # Call get_users_from_ad
+                users = service.get_users_from_ad()
+
+                # Verify that get_attribute_list is called
+                mock_get_attr_list.assert_called_once()
+
+                # Verify that search is called with correct arguments
+                self.mock_ad_connection.search.assert_called_once_with('(objectClass=user)', ['attr1', 'attr2'])
+
+                # Verify that users are created
+                self.assertEqual(len(users), 2)
+                self.assertIsInstance(users[0], ADUser)
+                self.assertIsInstance(users[1], ADUser)
 
     def test_add_member(self):
         # Initialize the service
@@ -141,7 +187,7 @@ class TestADUserService(unittest.TestCase):
         # Verify the result
         self.assertEqual(result, {'result': 'success'})
 
-    def test_attributes_standard(self):
+    def test_load_attributes_standard(self):
         # Mock os.path and open
         with patch('os.path.dirname') as mock_dirname, \
              patch('os.path.abspath') as mock_abspath, \
@@ -215,6 +261,71 @@ class TestADUserService(unittest.TestCase):
             # Expect ValueError
             with self.assertRaises(ValueError):
                 ADUserService._load_attributes('invalid.json', '_attributes_cache')
+
+    def test_get_users_from_ad_validation_error(self):
+        # Initialize the service
+        service = ADUserService()
+
+        # Mock the ad_connection.search method to return invalid data
+        ad_user_data = [
+            {'invalidField': 'invalidValue'},  # Missing required fields
+        ]
+        self.mock_ad_connection.search.return_value = ad_user_data
+
+        # Mock ADUser.get_attribute_list
+        with patch('models.ad_user.ADUser.get_attribute_list', return_value=['attr1', 'attr2']):
+            # Call get_users_from_ad
+            with patch('logging.Logger.error') as mock_logger_error:
+                users = service.get_users_from_ad()
+
+                # Verify that users list is empty due to validation error
+                self.assertEqual(len(users), 0)
+
+                # Verify that logger.error was called
+                mock_logger_error.assert_called()
+
+    def test_get_users_from_ad_with_attributes(self):
+        # Initialize the service
+        service = ADUserService()
+
+        # Mock attributes
+        attributes = ['attr1', 'attr2']
+
+        # Mock the ad_connection.search method
+        ad_user_data = [
+            {
+                'sAMAccountName': 'user1',
+                'distinguishedName': 'dn1',
+                'userPrincipalName': 'user1@example.com'
+            }
+        ]
+        self.mock_ad_connection.search.return_value = ad_user_data
+
+        # Mock ADUser.get_attribute_list
+        with patch('models.ad_user.ADUser.get_attribute_list', return_value=attributes):
+            # Call get_users_from_ad
+            users = service.get_users_from_ad()
+
+            # Verify that search is called with correct attributes
+            self.mock_ad_connection.search.assert_called_once_with('(objectClass=user)', attributes)
+
+            # Verify that users are created
+            self.assertEqual(len(users), 1)
+            self.assertIsInstance(users[0], ADUser)
+
+    def test_get_users_from_ad_exception_handling(self):
+        # Initialize the service
+        service = ADUserService()
+
+        # Mock the ad_connection.search method to raise an exception
+        self.mock_ad_connection.search.side_effect = Exception("AD Connection Error")
+
+        # Call get_users_from_ad and expect an exception
+        with self.assertRaises(Exception) as context:
+            service.get_users_from_ad()
+
+        # Verify the exception message
+        self.assertIn("AD Connection Error", str(context.exception))
 
 if __name__ == '__main__':
     unittest.main()

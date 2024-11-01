@@ -2,12 +2,17 @@
 Module providing the ADUserService class for interacting with Active Directory users.
 """
 
+from logging import getLogger
 import json
 import os
+from os import getenv
 from typing import Any, Optional
+from pydantic import ValidationError
+from dev_tools import timing_decorator
 
-from models import ADUser
 from apis import ADConnection, SQLConnection
+from models import ADUser
+from schemas import ADUserSchema
 
 class ADUserService:
     """Service class for interacting with Active Directory users.
@@ -27,6 +32,8 @@ class ADUserService:
             ad_connection (ADConnection, optional): An existing ADConnection instance.
                 If None, a new one will be created.
         """
+        self.logger = getLogger(__name__)
+
         if sql_connection is None:
             sql_connection = self._get_sql_connection()
         self.sql_connection = sql_connection
@@ -37,11 +44,12 @@ class ADUserService:
 
     def _get_sql_connection(self) -> SQLConnection:
         return SQLConnection(
-            server=os.getenv('ADUSER_DB_SERVER'),
-            database=os.getenv('ADUSER_DB_NAME'),
-            driver=os.getenv('ADUSER_SQL_DRIVER'),
+            server=getenv('ADUSER_DB_SERVER'),
+            database=getenv('ADUSER_DB_NAME'),
+            driver=getenv('ADUSER_SQL_DRIVER'),
         )
 
+    @timing_decorator
     def _get_ad_connection(self) -> ADConnection:
         """Create and return an ADConnection instance.
 
@@ -53,6 +61,7 @@ class ADUserService:
         ad_connection = ADConnection(ad_servers, search_base)
         return ad_connection
 
+    @timing_decorator
     def get_users(self) -> list[ADUser]:
         """Retrieve users from database.
 
@@ -72,8 +81,26 @@ class ADUserService:
         Returns:
             list[ADUser]: A list of ADUser instances matching the search criteria.
         """
-        ad_users_dict = self.ad_connection.search(search_filter)
-        ad_users = [ADUser(**x) for x in ad_users_dict]
+        attributes = ADUser.get_attribute_list()
+        ad_users_dict = self.ad_connection.search(search_filter, attributes)
+        ad_users = []
+
+        for user_data in ad_users_dict:
+            try:
+                # Validate and parse data using Pydantic model
+                validated_data = ADUserSchema(**user_data).model_dump()
+                # Create ADUser instance
+                ad_user = ADUser(**validated_data)
+                ad_users.append(ad_user)
+            except ValidationError as e:
+                # Handle validation errors
+                self.logger.error(
+                    "Validation error for user %s: %s",
+                    user_data.get('sAMAccountName'),
+                    e
+                )
+
+        #ad_users = [ADUser(**x) for x in ad_users_dict]
         return ad_users
 
     def add_member(self, user: ADUser, group_dn: str) -> dict[str, Any]:
@@ -136,10 +163,11 @@ class ADUserService:
                 with open(json_file_path, 'r', encoding='UTF-8') as f:
                     cache = json.load(f)
                     setattr(ADUserService, cache_attr, cache)
-            except FileNotFoundError as exc:
-                raise FileNotFoundError(f"JSON file not found at {json_file_path}") from exc
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"Error decoding JSON file '{filename}': {exc}") from exc
+            except FileNotFoundError as e:
+                raise FileNotFoundError(f"JSON file not found at {json_file_path}") from e
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Error decoding JSON file '{filename}': {e}") from e
+
 
         return cache
 

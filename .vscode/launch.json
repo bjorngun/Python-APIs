@@ -27,7 +27,8 @@
             "args": [
                 "${workspaceFolder}/src/apis",
                 "${workspaceFolder}/src/models",
-                "${workspaceFolder}/src/services"
+                "${workspaceFolder}/src/services",
+                "${workspaceFolder}/src/schemas"
             ],
             "console": "integratedTerminal",
             "justMyCode": true

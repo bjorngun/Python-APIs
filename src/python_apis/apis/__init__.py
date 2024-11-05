@@ -38,8 +38,8 @@ Dependencies:
 
 """
 
-from .ad_api import ADConnection
-from .sql_api import SQLConnection
+from python_apis.apis.ad_api import ADConnection
+from python_apis.apis.sql_api import SQLConnection
 
 __all__ = [
     "ADConnection",

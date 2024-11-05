@@ -93,7 +93,7 @@ class TestADConnection(unittest.TestCase):
 
         # Arrange
         distinguished_name = 'cn=John Doe,ou=users,dc=example,dc=com'
-        changes = {'departmentNumber': '11122'}
+        changes = [('departmentNumber', '11122')]
         expected_changes = {'departmentNumber': [MODIFY_REPLACE, '11122']}
         self.mock_connection.modify.return_value = True
         self.mock_connection.result = {'description': 'success'}

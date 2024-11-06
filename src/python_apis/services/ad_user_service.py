@@ -7,9 +7,11 @@ import json
 import os
 from os import getenv
 from typing import Any, Optional
-from pydantic import ValidationError
-from dev_tools import timing_decorator
 
+from ldap3.core.exceptions import LDAPException
+from pydantic import ValidationError
+
+from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADUser
 from python_apis.schemas import ADUserSchema
@@ -127,17 +129,56 @@ class ADUserService:
         """
         return self.ad_connection.remove_member(user.distinguishedName, group_dn)
 
-    def modify(self, user: ADUser, changes: list[tuple[str, str]]) -> dict[str, Any]:
+    def modify_user(self, user: ADUser, changes: list[tuple[str, str]]) -> dict[str, Any]:
         """Modify attributes of a user in Active Directory.
 
         Args:
             user (ADUser): The user to modify.
-            changes (list[tuple[str, str]]): A list of changes to apply.
+            changes (list[tuple[str, str]]): A list of attribute changes to apply.
+                Each tuple consists of an attribute name and its new value.
+                For example:
+                    [('givenName', 'John'), ('sn', 'Doe')]
 
         Returns:
-            dict[str, Any]: The result of the modify operation.
+            dict[str, Any]: A dictionary containing the result of the modify operation with the
+            following keys:
+                - 'success' (bool): Indicates whether the modification was successful.
+                - 'result' (Any): Additional details about the operation result or error message.
+                - 'changes' (dict[str, str]): A mapping of attribute names to their changes in the
+                format 'old_value -> new_value'.
         """
-        return self.ad_connection.modify(user.distinguishedName, changes)
+        change_affects = {k: f"{getattr(user, k)} -> {v}" for k, v in changes}
+        try:
+            response = self.ad_connection.modify(user.distinguishedName, changes)
+        except LDAPException as e:
+            self.logger.error(
+                "Exception occurred while modifying user %s: changes: %s error msg: %s",
+                user.sAMAccountName,
+                change_affects,
+                str(e),
+            )
+            return {'success': False, 'result': str(e)}
+
+        if response is None:
+            self.logger.warning(
+            "Updated got no response when trying to modify %s: changes: %s",
+            user.sAMAccountName,
+            change_affects,
+        )
+        elif response.get("success", False):
+            self.logger.info("Updated %s: changes: %s", user.sAMAccountName, change_affects)
+        else:
+            self.logger.warning(
+                "Failed to update AD user: %s\n\tResponse details: %s\n\tChanges: %s",
+                user.sAMAccountName,
+                response.get("result"),
+                change_affects,
+            )
+        return {
+            'success': response.get('success', False),
+            'result': response.get('result'),
+            'changes': change_affects,
+        }
 
     @staticmethod
     def _load_attributes(filename: str, cache_attr: str) -> list[str]:

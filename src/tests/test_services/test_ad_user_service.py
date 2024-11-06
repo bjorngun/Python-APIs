@@ -173,19 +173,19 @@ class TestADUserService(unittest.TestCase):
         # Create a mock user
         user = MagicMock(spec=ADUser)
         user.distinguishedName = 'user_dn'
-        changes = [('field1', 'value1'), ('field2', 'value2')]
+        changes = [('employeeNumber', 'value1'), ('department', 'value2')]
 
         # Mock the ad_connection.modify method
         self.mock_ad_connection.modify.return_value = {'result': 'success'}
 
         # Call modify
-        result = service.modify(user, changes)
+        result = service.modify_user(user, changes)
 
         # Verify that modify is called with correct arguments
         self.mock_ad_connection.modify.assert_called_once_with('user_dn', changes)
 
         # Verify the result
-        self.assertEqual(result, {'result': 'success'})
+        self.assertEqual(result.get('result'), 'success')
 
     def test_load_attributes_standard(self):
         # Mock os.path and open

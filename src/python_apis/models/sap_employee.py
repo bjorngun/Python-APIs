@@ -12,7 +12,7 @@ from os import getenv
 from typing import Optional, ClassVar
 
 from dotenv import load_dotenv
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, Boolean
 from unidecode import unidecode
 
 from python_apis.models.base import Base
@@ -36,6 +36,7 @@ class Employee(Base):
     SAP_Department_NO_str = Column(String, nullable=True)
     SAP_Pos = Column(String, nullable=True)
     SAP_Department = Column(String, nullable=True)
+    SAP_MainJob = Column(Boolean)
     AD_name = Column(String, nullable=True)
     AD_displayName = Column(String, nullable=True)
     AD_email = Column(String, nullable=True)

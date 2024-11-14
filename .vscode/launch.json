@@ -2,6 +2,14 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python Debugger: Run specific defined file",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/tests/test_services/test_jira_service.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+        },
+        {
             "name": "Python: Run All Tests",
             "type": "debugpy",
             "request": "launch",

@@ -23,6 +23,7 @@ class SQLConnection:
             database (str): The database name.
             driver (str): The ODBC driver name.
         """
+        self.logger = logging.getLogger(__name__)
         self.server = server
         self.database = database
         self.driver = driver
@@ -37,7 +38,6 @@ class SQLConnection:
         )
         session_factory = sessionmaker(bind=self.engine)
         self.session = session_factory()
-        self.logger = logging.getLogger(__name__)
 
     def __str__(self):
         """Return a string representation of the SQLConnection instance."""
@@ -55,17 +55,18 @@ class SQLConnection:
             rows (list): A list of altered rows to update.
 
         Returns:
-            bool: True if the update is successful, False otherwise.
+            bool: True if the update is successful, raise SQLAlchemyError otherwise.
         """
         try:
             for row in rows:
                 self.session.merge(row)
             self.session.commit()
+            self.logger.info('JiraIssue table has been successfully updated')
             return True
         except SQLAlchemyError as error:
             self.session.rollback()
             self.logger.error('Failed to update rows: %s', error)
-            return False
+            raise error
 
     def add(self, new_list: list):
         """

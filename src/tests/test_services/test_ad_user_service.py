@@ -78,7 +78,7 @@ class TestADUserService(unittest.TestCase):
         mock_query.all.return_value = [user1, user2]
 
         # Call get_users
-        users = service.get_users()
+        users = service.get_users_from_ad()
 
         # Verify that the query is made
         self.mock_sql_connection.session.query.assert_called_once_with(ADUser)

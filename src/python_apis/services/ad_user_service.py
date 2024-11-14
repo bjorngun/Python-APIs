@@ -3,10 +3,8 @@ Module providing the ADUserService class for interacting with Active Directory u
 """
 
 from logging import getLogger
-import json
 import os
-from os import getenv
-from typing import Any, Optional
+from typing import Any
 
 from ldap3.core.exceptions import LDAPException
 from pydantic import ValidationError
@@ -18,20 +16,15 @@ from python_apis.schemas import ADUserSchema
 
 class ADUserService:
     """Service class for interacting with Active Directory users.
-
-    Attributes:
-        _attributes_cache (Optional[list[str]]): Cache for standard attributes.
-        _attributes_extended_cache (Optional[list[str]]): Cache for extended attributes.
     """
 
-    _attributes_cache: Optional[list[str]] = None
-    _attributes_extended_cache: Optional[list[str]] = None
-
     def __init__(self, ad_connection: ADConnection = None, sql_connection: SQLConnection = None):
-        """Initialize the ADUserService with an ADConnection.
+        """Initialize the ADUserService with an ADConnection and an SQLConnection.
 
         Args:
             ad_connection (ADConnection, optional): An existing ADConnection instance.
+                If None, a new one will be created.
+            sql_connection (SQLConnection, optional): An existing SQLConnection instance.
                 If None, a new one will be created.
         """
         self.logger = getLogger(__name__)
@@ -46,9 +39,9 @@ class ADUserService:
 
     def _get_sql_connection(self) -> SQLConnection:
         return SQLConnection(
-            server=getenv('ADUSER_DB_SERVER'),
-            database=getenv('ADUSER_DB_NAME'),
-            driver=getenv('ADUSER_SQL_DRIVER'),
+            server=os.getenv('AD_DB_SERVER', os.getenv('DEFAULT_DB_SERVER')),
+            database=os.getenv('AD_DB_NAME', os.getenv('DEFAULT_DB_NAME')),
+            driver=os.getenv('AD_SQL_DRIVER', os.getenv('DEFAULT_SQL_DRIVER')),
         )
 
     @timing_decorator
@@ -64,7 +57,7 @@ class ADUserService:
         return ad_connection
 
     @timing_decorator
-    def get_users(self) -> list[ADUser]:
+    def get_users_from_db(self) -> list[ADUser]:
         """Retrieve users from database.
 
         Returns:
@@ -73,6 +66,45 @@ class ADUserService:
 
         ad_users = self.sql_connection.session.query(ADUser).all()
         return ad_users
+
+    @timing_decorator
+    def update_user_db(self):
+        """
+        Update the local user database with the latest users from Active Directory.
+
+        This method performs the following actions:
+
+        1. Retrieves all user entries from Active Directory by calling `get_users_from_ad()`.
+        2. Deletes all existing `ADUser` records from the local database.
+        3. Adds the newly fetched users to the database session.
+        4. Commits the transaction to save the changes to the database.
+
+        If an exception occurs during the database operations, the method will:
+
+        - Roll back the current transaction to prevent partial commits.
+        - Log an error message with details about the exception.
+        - Re-raise the original exception to be handled by the calling code.
+
+        Note:
+            - This method is decorated with `@timing_decorator`, which measures and logs the
+            execution time.
+            - Ensure that the database connection is properly configured and active before
+            calling this method.
+
+        Raises:
+            Exception: Re-raises any exception that occurs during the database update process.
+
+        """
+        ad_users = self.get_users_from_ad()
+        try:
+            self.sql_connection.session.query(ADUser).delete()
+
+            self.sql_connection.session.add_all(ad_users)
+            self.sql_connection.session.commit()
+        except Exception as e:
+            self.sql_connection.session.rollback()
+            self.logger.error('Rolling back changes, error: %s', e)
+            raise e
 
     def get_users_from_ad(self, search_filter: str = '(objectClass=user)') -> list[ADUser]:
         """Retrieve users from Active Directory based on a search filter.
@@ -181,51 +213,10 @@ class ADUserService:
         }
 
     @staticmethod
-    def _load_attributes(filename: str, cache_attr: str) -> list[str]:
-        """Load attributes from a JSON file and cache them.
-
-        Args:
-            filename (str): The name of the JSON file containing the attributes.
-            cache_attr (str): The name of the cache attribute.
-
-        Returns:
-            list[str]: The list of attributes loaded from the file.
-
-        Raises:
-            FileNotFoundError: If the JSON file is not found.
-            ValueError: If there is an error decoding the JSON file.
-        """
-        cache = getattr(ADUserService, cache_attr)
-        if cache is None:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            json_file_path = os.path.join(current_dir, filename)
-
-            try:
-                with open(json_file_path, 'r', encoding='UTF-8') as f:
-                    cache = json.load(f)
-                    setattr(ADUserService, cache_attr, cache)
-            except FileNotFoundError as e:
-                raise FileNotFoundError(f"JSON file not found at {json_file_path}") from e
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Error decoding JSON file '{filename}': {e}") from e
-
-
-        return cache
-
-    @staticmethod
-    def attributes(extended: bool = False) -> list[str]:
+    def attributes() -> list[str]:
         """Get the list of attributes for ADUser.
-
-        Args:
-            extended (bool): If True, load extended attributes. Defaults to False.
 
         Returns:
             list[str]: The list of attributes.
         """
-        if extended:
-            cache_attr = '_attributes_extended_cache'
-            filename = 'ad_user_attributes_extended.json'
-        else:
-            cache_attr = '_attributes_cache'
-            filename = 'ad_user_attributes.json'
-        return ADUserService._load_attributes(filename, cache_attr)
+        return ADUserService.attributes()

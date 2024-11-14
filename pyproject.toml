@@ -29,7 +29,11 @@ dependencies = [
     'winkerberos',
     'cryptography',
     'unidecode',
+    'python-dateutil',
     'pydantic',
+    'requests',
+    'pylint',
+    'pylint-pydantic',
 ]
 
 [project.optional-dependencies]

@@ -5,7 +5,7 @@
             "name": "Python Debugger: Run specific defined file",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/tests/test_services/test_jira_service.py",
+            "program": "${workspaceFolder}/src/tests/test_services/test_ad_ou_service.py",
             "console": "integratedTerminal",
             "justMyCode": false,
         },

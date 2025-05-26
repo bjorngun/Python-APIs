@@ -11,9 +11,9 @@ import collections
 import ssl
 from typing import Any
 
-from ldap3 import (ALL_ATTRIBUTES, KERBEROS, MODIFY_ADD, MODIFY_DELETE,
+from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, Connection,
-                   Server, ServerPool, Tls)
+                   Server, ServerPool, Tls, GSSAPI)
 
 
 class ADConnection:
@@ -25,7 +25,7 @@ class ADConnection:
         self.ad_connection = self._get_ad_connection(servers)
         self.search_base = search_base
 
-    def _get_ad_connection(self, servers: list) -> Connection:
+    def _get_ad_connection(self, servers: list) -> Connection | None:
         """initializes a connection to the active directory.
         """
 
@@ -36,12 +36,12 @@ class ADConnection:
         connection = Connection(
             server_pool,
             authentication=SASL,
-            sasl_mechanism=KERBEROS,
+            sasl_mechanism=GSSAPI,
             receive_timeout=10,
         )
 
         if not connection.bind():
-            return False
+            return None
         return connection
 
     def _get_paged_search(self, search_filter: str, attributes: list[str]):
@@ -52,12 +52,12 @@ class ADConnection:
             search_filter=search_filter,
             search_scope=SUBTREE,
             attributes=attributes,
-            paged_size=100,
+            paged_size=500,
             generator=True,
         )
         return entry_generator
 
-    def search(self, search_filter: str, attributes: list[str] = None) -> list[dict[str, str]]:
+    def search(self, search_filter: str, attributes: list[str] | None = None) -> list[dict[str, str]]:
         """Returns a single result or false if none exist.
 
         Args:
@@ -73,6 +73,8 @@ class ADConnection:
 
         entry_generator = self._get_paged_search(search_filter, attributes)
         result_list = [x['attributes'] for x in entry_generator if 'attributes' in x]
+        for ad_object in result_list:
+            self.set_ou_for_object(ad_object)
         return result_list
 
     def get(self, search_filter: str, attributes: list[str] = None) -> dict[str, str]:
@@ -176,3 +178,10 @@ class ADConnection:
 
         changes = {'member': user_dn}
         return self.remove_value(group_dn, changes)
+
+    def set_ou_for_object(self, ad_object: dict[str, Any]) -> None:
+        if 'distinguishedName' in ad_object and 'ou' not in ad_object:
+            if ',' not in ad_object['distinguishedName']:
+                return
+            ou = ','.join(ad_object['distinguishedName'].split(',')[1:])
+            ad_object['ou'] = ou

@@ -232,7 +232,6 @@ class JiraService:
 
             jira_issues.append(issue)
 
-        print(len(jira_issues))
         if len(jira_issues) == 100:
             jira_issues += self.get_issues_from_jira(start_at + 100)
         return jira_issues

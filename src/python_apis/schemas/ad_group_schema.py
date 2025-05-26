@@ -22,8 +22,10 @@ class ADGroupSchema(BaseModel):
     cn: Optional[str] = None
     description: Optional[str] = None
     distinguishedName: str
+    ou: Optional[str] = None
     groupType: Optional[int] = None
-    instanceType: Optional[str] = None
+    instanceType: Optional[int]
+    sAMAccountType: Optional[int]
     managedBy: Optional[str] = None
     name: str
     objectCategory: Optional[str] = None
@@ -31,11 +33,11 @@ class ADGroupSchema(BaseModel):
     objectGUID: Optional[str] = None
     objectSid: Optional[str] = None
     sAMAccountName: Optional[str] = None
-    sAMAccountType: Optional[str] = None
     uSNChanged: Optional[int] = None
     uSNCreated: Optional[int] = None
     whenChanged: Optional[datetime] = None
     whenCreated: Optional[datetime] = None
+    extensionName: Optional[str] = None
 
     @field_validator('*', mode='before')
     def general_validator(cls, value, _info: ValidationInfo):

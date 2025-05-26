@@ -219,4 +219,4 @@ class ADUserService:
         Returns:
             list[str]: The list of attributes.
         """
-        return ADUserService.attributes()
+        return ADUser.get_attribute_list()

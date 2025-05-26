@@ -16,6 +16,16 @@ from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
                    Server, ServerPool, Tls, GSSAPI)
 
 
+class ADConnectionError(Exception):
+    """Custom exception for errors related to Active Directory connections."""
+    pass
+
+
+class ADMissingServersError(Exception):
+    """Custom exception for errors related to missing Active Directory servers."""
+    pass
+
+
 class ADConnection:
     """This class contains the functionality concerning the
     connection and the methods that gets data from AD and can modify the AD.
@@ -28,6 +38,8 @@ class ADConnection:
     def _get_ad_connection(self, servers: list) -> Connection | None:
         """initializes a connection to the active directory.
         """
+        if not servers:
+            raise ADMissingServersError  # Explicitly handle empty server list
 
         tls = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
         ldap_servers = [Server(x, use_ssl=True, tls=tls) for x in servers]
@@ -41,7 +53,9 @@ class ADConnection:
         )
 
         if not connection.bind():
-            return None
+            raise ADConnectionError(
+                f"Failed to bind to Active Directory: {connection.result['description']}"
+            )
         return connection
 
     def _get_paged_search(self, search_filter: str, attributes: list[str]):

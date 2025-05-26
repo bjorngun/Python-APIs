@@ -26,7 +26,7 @@ dependencies = [
     'ldap3',
     'python-dotenv',
     'sqlalchemy',
-    'winkerberos',
+    'gssapi',
     'cryptography',
     'unidecode',
     'python-dateutil',

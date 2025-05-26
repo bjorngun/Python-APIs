@@ -31,9 +31,6 @@ Usage Example:
     session.close()
 
 Notes:
-    - Field Naming: The class attributes are named using `snake_case` to comply with PEP 8
-      conventions. If the database column names differ, the `Column` definitions specify the
-      exact column names using the `name` parameter.
     - Validation Methods: The `@validates` decorators are used to ensure that data being
       inserted or updated in the database is properly formatted and consistent.
     - Date and Time Fields: Date and time fields are handled carefully to ensure timezone

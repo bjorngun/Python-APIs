@@ -26,9 +26,9 @@ class EmployeeService:
 
     def _get_sql_connection(self) -> SQLConnection:
         return SQLConnection(
-            server=getenv('EMPLOYEE_DB_SERVER'),
-            database=getenv('EMPLOYEE_DB_NAME'),
-            driver=getenv('EMPLOYEE_SQL_DRIVER'),
+            server=getenv('EMPLOYEE_DB_SERVER', getenv('DEFAULT_DB_SERVER')),
+            database=getenv('EMPLOYEE_DB_NAME', getenv('DEFAULT_DB_NAME')),
+            driver=getenv('EMPLOYEE_SQL_DRIVER', getenv('DEFAULT_SQL_DRIVER')),
         )
 
     @timing_decorator

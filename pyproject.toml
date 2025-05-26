@@ -26,10 +26,14 @@ dependencies = [
     'ldap3',
     'python-dotenv',
     'sqlalchemy',
-    'winkerberos',
+    'gssapi',
     'cryptography',
     'unidecode',
+    'python-dateutil',
     'pydantic',
+    'requests',
+    'pylint',
+    'pylint-pydantic',
 ]
 
 [project.optional-dependencies]

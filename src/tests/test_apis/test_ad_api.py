@@ -15,6 +15,36 @@ class TestADConnection(unittest.TestCase):
         self.mock_connection = MagicMock()
         self.mock_connection_cls.return_value = self.mock_connection
         self.mock_connection.bind.return_value = True
+        
+    def test_gssapi_authentication_failure(self):
+        servers = ['ldap://server1']
+        search_base = 'dc=example,dc=com'
+
+        # Simulate bind failure
+        self.mock_connection.bind.return_value = False
+
+        ad_conn = ADConnection(servers, search_base)
+
+        self.assertIsNone(ad_conn.ad_connection, "Connection should be None when GSSAPI authentication fails.")
+
+    def test_successful_gssapi_connection(self):
+        servers = ['ldap://server1']
+        search_base = 'dc=example,dc=com'
+
+        # Ensure bind succeeds
+        self.mock_connection.bind.return_value = True
+
+        ad_conn = ADConnection(servers, search_base)
+
+        self.assertIsNotNone(ad_conn.ad_connection, "Connection should not be None when GSSAPI authentication succeeds.")
+
+    def test_no_ldap_servers_available(self):
+        servers = []
+        search_base = 'dc=example,dc=com'
+
+        ad_conn = ADConnection(servers, search_base)
+
+        self.assertIsNone(ad_conn.ad_connection, "Should return None connection when no servers are provided.")
 
 
     @patch('python_apis.apis.ad_api.ServerPool')
@@ -55,14 +85,27 @@ class TestADConnection(unittest.TestCase):
         mock_server_pool.assert_called_once_with(
             [mock_server_obj, mock_server_obj], 'ROUND_ROBIN', active=True, exhaust=True
         )
+        
+        from ldap3 import SASL, GSSAPI
+        
         mock_connection_cls.assert_called_once_with(
             mock_server_pool_obj,
-            authentication='SASL',
-            sasl_mechanism='GSSAPI',
+            authentication=SASL,
+            sasl_mechanism=GSSAPI,
             receive_timeout=10,
         )
         mock_connection.bind.assert_called_once()
         self.assertEqual(connection, mock_connection)
+
+    def test_search_no_results(self):
+        self.ad_conn = ADConnection(['ldap://server1'], 'dc=example,dc=com')
+
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+
+        result = self.ad_conn.search('(objectClass=user)')
+
+        self.assertEqual(result, [], "Search should return empty list when no results are found.")
+
 
     @patch('python_apis.apis.ad_api.ADConnection._get_paged_search')
     def test_search(self, mock_get_paged_search):
@@ -208,7 +251,7 @@ class TestADConnection(unittest.TestCase):
             search_filter=search_filter,
             search_scope=SUBTREE,
             attributes=attributes,
-            paged_size=100,
+            paged_size=500,
             generator=True,
         )
         self.assertTrue(hasattr(result, '__iter__'))

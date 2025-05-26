@@ -53,18 +53,23 @@ class ADGroup(Base):
     @property
     def group_type_name(self) -> str:
         '''Get name of type of group for the integer representing the group in AD'''
+        return self.get_group_type_name(getattr(self, "groupType", None))
+
+    @staticmethod
+    def get_group_type_name(group_type: Optional[int]) -> str:
+        """Get the name of the group type based on its integer value."""
         GROUP_TYPES = {
-            '2': 'Distribution Group - Global',
-            '4': 'Distribution Group - Domain Local',
-            '8': 'Distribution Group - Universal',
-            '-2147483646': 'Security Group - Global',
-            '-2147483644': 'Security Group - Domain Local',
-            '-2147483643': 'Security Group - Domain Local',
-            '-2147483640': 'Security Group - Universal'
+            2: 'Distribution Group - Global',
+            4: 'Distribution Group - Domain Local',
+            8: 'Distribution Group - Universal',
+            -2147483646: 'Security Group - Global',
+            -2147483644: 'Security Group - Domain Local',
+            -2147483643: 'Security Group - Domain Local',
+            -2147483640: 'Security Group - Universal'
         }
-        if str(self.groupType) not in GROUP_TYPES:
-            return  'N/A'
-        return GROUP_TYPES[str(self.groupType)]
+        if group_type is None:
+            return 'N/A'
+        return GROUP_TYPES.get(group_type, 'N/A')
 
     @staticmethod
     def get_attribute_list():

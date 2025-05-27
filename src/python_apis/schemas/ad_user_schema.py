@@ -5,6 +5,8 @@ Module containing the ADUserSchema class for data validation of Active Directory
 using Pydantic.
 """
 
+# pylint: disable=duplicate-code
+
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, field_validator, model_validator, ValidationInfo

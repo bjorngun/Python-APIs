@@ -136,19 +136,19 @@ class JiraService:
         fields: dict[str, dict] = issue_data.get('fields', {})
 
         issue = JiraIssue(
-            id=int(issue_data.get('id')),
-            key=issue_data.get('key'),
-            summary=fields.get('summary'),
-            description=self.extract_description(fields.get('description')),
-            status=fields.get('status', {}).get('name'),
-            priority=fields.get('priority', {}).get('name'),
-            issueType=fields.get('issuetype', {}).get('name'),
-            created=self.parse_datetime(fields.get('created')),
-            updated=self.parse_datetime(fields.get('updated')),
-            project_key=fields.get('project', {}).get('key'),
-            project_name=fields.get('project', {}).get('name'),
-            projectId=fields.get('project', {}).get('id'),
-        )
+                id=int(issue_data.get('id')),
+                key=issue_data.get('key'),
+                summary=fields.get('summary'),
+                description=self.extract_description(fields.get('description')),
+                status=fields.get('status', {}).get('name'),
+                priority=fields.get('priority', {}).get('name'),
+                issue_type=fields.get('issuetype', {}).get('name'),
+                created=self.parse_datetime(fields.get('created')),
+                updated=self.parse_datetime(fields.get('updated')),
+                project_key=fields.get('project', {}).get('key'),
+                project_name=fields.get('project', {}).get('name'),
+                project_id=fields.get('project', {}).get('id'),
+            )
 
         # Handle parent for sub-tasks
         parent: dict[str, str] = fields.get('parent', {})
@@ -164,14 +164,14 @@ class JiraService:
 
         # Handle assignee
         assignee: dict[str, str] = fields.get('assignee', {})
-        issue.assignee_displayName = assignee.get('displayName') if assignee else None
-        issue.assignee_accountId = assignee.get('accountId') if assignee else None
+        issue.assignee_display_name = assignee.get('displayName') if assignee else None
+        issue.assignee_account_id = assignee.get('accountId') if assignee else None
         issue.assignee_active = assignee.get('active') if assignee else None
 
         # Handle reporter
         reporter: dict[str, dict] = fields.get('reporter', {})
-        issue.reporter_displayName = reporter.get('displayName')
-        issue.reporter_accountId = reporter.get('accountId')
+        issue.reporter_display_name = reporter.get('displayName')
+        issue.reporter_account_id = reporter.get('accountId')
         issue.reporter_active = reporter.get('active')
         issue.reporter_email_address = reporter.get('emailAddress')
 
@@ -185,7 +185,7 @@ class JiraService:
 
         # Handle fixVersions
         fix_versions: list[dict] = fields.get('fixVersions', [])
-        issue.fixVersions = ', '.join([version.get('name') for version in fix_versions])
+        issue.fix_versions = ', '.join([version.get('name') for version in fix_versions])
 
         # Handle attachments
         attachments: list[dict] = fields.get('attachment', [])
@@ -281,28 +281,28 @@ class JiraService:
                 name=comp_data.get('name'),
                 description=comp_data.get('description'),
                 assigneeType=comp_data.get('assigneeType'),
-                realAssigneeType=comp_data.get('realAssigneeType'),
+                real_assignee_type=comp_data.get('realAssigneeType'),
                 project=comp_data.get('project'),
-                projectId=comp_data.get('projectId'),
+                project_id=comp_data.get('projectId'),
             )
 
             # Handle 'lead' nested dictionary
             lead = comp_data.get('lead', {})
-            component.lead_displayName = lead.get('displayName', None)
-            component.lead_accountId = lead.get('accountId', None)
+            component.lead_display_name = lead.get('displayName', None)
+            component.lead_account_id = lead.get('accountId', None)
             component.lead_active = lead.get('active', None)
 
             # Handle 'assignee' nested dictionary (if present)
             assignee = comp_data.get('assignee', {})
-            component.assignee_displayName = assignee.get('displayName', None)
-            component.assignee_accountId = assignee.get('accountId', None)
+            component.assignee_display_name = assignee.get('displayName', None)
+            component.assignee_account_id = assignee.get('accountId', None)
             component.assignee_active = assignee.get('active', None)
 
             # Handle 'realAssignee' nested dictionary (if present)
             real_assignee = comp_data.get('realAssignee', {})
-            component.realAssignee_displayName = real_assignee.get('displayName', None)
-            component.realAssignee_accountId = real_assignee.get('accountId', None)
-            component.realAssignee_active = real_assignee.get('active', None)
+            component.real_assignee_display_name = real_assignee.get('displayName', None)
+            component.real_assignee_account_id = real_assignee.get('accountId', None)
+            component.real_assignee_active = real_assignee.get('active', None)
 
             jira_components.append(component)
 

@@ -5,6 +5,8 @@ Module containing the ADGroupSchema class for data validation of Active Director
 Group attributes using Pydantic.
 """
 
+# pylint: disable=duplicate-code
+
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, field_validator, ValidationInfo

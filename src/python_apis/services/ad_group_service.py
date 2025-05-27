@@ -158,7 +158,10 @@ class ADGroupService:
             changes (list[tuple[str, Any]]): A list of attribute changes to apply.
                 Each tuple consists of an attribute name and its new value.
                 For example:
-                    [('description', 'New Description'), ('managedBy', 'CN=Manager,OU=Users,DC=example,DC=com')]
+                    [
+                        ('description', 'New Description'),
+                        ('managedBy', 'CN=Manager,OU=Users,DC=example,DC=com'),
+                    ]
 
         Returns:
             dict[str, Any]: A dictionary containing the result of the modify operation with the

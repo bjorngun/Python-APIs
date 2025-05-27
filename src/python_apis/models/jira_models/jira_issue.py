@@ -16,7 +16,7 @@ Methods:
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, Text
 from python_apis.models.base import Base
 
-class JiraIssue(Base):
+class JiraIssue(Base):  # pylint: disable=too-few-public-methods
     """
     Jira Issue model representing issue attributes in the database.
 
@@ -54,7 +54,7 @@ class JiraIssue(Base):
     request_type_id = Column(String(255), nullable=True)
     request_type_name = Column(String(255), nullable=True)
     request_type_description = Column(String(255), nullable=True)
-    
+
     parent_id = Column(Integer, nullable=True)  # For sub-tasks
     parent_key = Column(String(255), nullable=True)  # For sub-tasks
     parent_summary = Column(String(255), nullable=True)  # For sub-tasks

@@ -5,9 +5,10 @@ organizational units.
 
 from logging import getLogger
 from os import getenv
-from typing import Any
 
 from dateutil import parser
+
+# pylint: disable=invalid-name
 
 from dev_tools import timing_decorator
 from python_apis.apis import JiraConnection, SQLConnection
@@ -77,11 +78,13 @@ class JiraService:
 
     @timing_decorator
     def get_issies_from_db(self) -> list[JiraIssue]:
+        """Retrieve all Jira issues from the database."""
         jira_issues = self.sql_connection.session.query(JiraIssue).all()
         return jira_issues
 
     @timing_decorator
     def get_components_from_db(self) -> list[JiraComponent]:
+        """Retrieve all Jira components from the database."""
         jira_components = self.sql_connection.session.query(JiraComponent).all()
         return jira_components
 
@@ -126,10 +129,10 @@ class JiraService:
         """
         if datetime_str:
             return parser.isoparse(datetime_str)
-        else:
-            return None
+        return None
 
     def _raw_issue_to_object(self, issue_data: dict[str, dict]):
+        """Convert raw issue data from Jira into a :class:`JiraIssue`."""
         fields: dict[str, dict] = issue_data.get('fields', {})
 
         issue = JiraIssue(
@@ -218,6 +221,7 @@ class JiraService:
 
     @timing_decorator
     def get_issues_from_jira(self, start_at: int = 0) -> list[JiraIssue]:
+        """Retrieve issues from Jira recursively starting at ``start_at``."""
         url_suffix = 'search'
         parameters = {
             "jql": "project=UT",
@@ -237,6 +241,7 @@ class JiraService:
         return jira_issues
 
     def get_request_types_from_jira(self) -> list[JiraRequestType]:
+        """Fetch request types from Jira Service Desk."""
         servicedesk_endpoint = getenv('JIRA_SERVICEDESK_ENDPOINT')
         url_suffix = 'servicedeskapi/requesttype'
         parameters = {
@@ -266,6 +271,7 @@ class JiraService:
 
     @timing_decorator
     def get_components_from_jira(self) -> list[JiraComponent]:
+        """Retrieve all components from Jira."""
         raw_components = self.jira_connection.get_objects(JiraComponent.URL_SUFFIX)
         jira_components = []
 
@@ -304,6 +310,7 @@ class JiraService:
 
     @timing_decorator
     def update_components_db(self):
+        """Update the components table with data fetched from Jira."""
         jira_components = self.get_components_from_jira()
         try:
             self.sql_connection.session.query(JiraComponent).delete()
@@ -319,6 +326,7 @@ class JiraService:
 
     @timing_decorator
     def update_issues_db(self):
+        """Update the issues table with data fetched from Jira."""
         jira_issues: list[JiraIssue] = self.get_issues_from_jira()
         try:
             self.sql_connection.update(jira_issues)
@@ -330,6 +338,7 @@ class JiraService:
 
     @timing_decorator
     def update_request_types_db(self):
+        """Update the request types table with data fetched from Jira."""
         jira_request_types: list[JiraRequestType] = self.get_request_types_from_jira()
         try:
             self.sql_connection.update(jira_request_types)

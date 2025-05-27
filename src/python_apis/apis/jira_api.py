@@ -14,18 +14,18 @@ import requests
 
 
 class JiraServerError(Exception):
-    pass
+    """Raised when the Jira server returns a 500 error."""
 
 
 class JiraUnknownError(Exception):
-    pass
+    """Raised when an unknown error is returned from Jira."""
 
 
 class SpecificJiraError(Exception):
-    pass
+    """Raised for Jira errors that have a known error string."""
 
 
-class JiraConnection:
+class JiraConnection:  # pylint: disable=too-few-public-methods
     """This class contains the functionality concerning the
     connection and the methods that gets data from AD and can modify the AD.
     """
@@ -100,6 +100,6 @@ class JiraConnection:
         if response.status_code == 500:
             self.logger.error(exception_str)
             raise JiraServerError(exception_str)
-        elif "Some endpoint specific string" in response.text:
+        if "Some endpoint specific string" in response.text:
             raise SpecificJiraError(f'parameters: {parameters}')
         raise JiraUnknownError(exception_str)

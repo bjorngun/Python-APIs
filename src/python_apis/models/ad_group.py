@@ -47,6 +47,7 @@ class ADGroup(Base):
         return f"ADGroup({self.name}-{self.description})"
 
     def get_ou(self):
+        """Return the organizational unit for this group."""
         ou = ','.join(self.distinguishedName.split(',')[1:])
         return ou
 
@@ -58,7 +59,7 @@ class ADGroup(Base):
     @staticmethod
     def get_group_type_name(group_type: Optional[int]) -> str:
         """Get the name of the group type based on its integer value."""
-        GROUP_TYPES = {
+        group_types = {
             2: 'Distribution Group - Global',
             4: 'Distribution Group - Domain Local',
             8: 'Distribution Group - Universal',
@@ -69,10 +70,11 @@ class ADGroup(Base):
         }
         if group_type is None:
             return 'N/A'
-        return GROUP_TYPES.get(group_type, 'N/A')
+        return group_types.get(group_type, 'N/A')
 
     @staticmethod
     def get_attribute_list():
+        """Return the list of attributes for fetching group data from AD."""
         return [
             'cn',
             'description',

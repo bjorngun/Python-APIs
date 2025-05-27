@@ -1,8 +1,11 @@
+"""SQLAlchemy model for representing Jira components."""
+
 from sqlalchemy import Column, String, Integer, Boolean
 
 from python_apis.models.base import Base
 
-class JiraComponent(Base):
+class JiraComponent(Base):  # pylint: disable=too-few-public-methods
+    """Database model for a Jira component."""
     URL_SUFFIX = 'project/UT/components'
 
     __tablename__ = 'JiraComponent'

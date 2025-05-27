@@ -1,8 +1,10 @@
+"""SQLAlchemy model for representing Jira request types."""
+
 from sqlalchemy import Column, Integer, String, Text
 from python_apis.models.base import Base
 
 
-class JiraRequestType(Base):
+class JiraRequestType(Base):  # pylint: disable=too-few-public-methods
     """
     Jira Request Type model representing request types in the database.
 

@@ -2,6 +2,8 @@
 Module providing the ADGroupService class for interacting with Active Directory groups.
 """
 
+# pylint: disable=duplicate-code
+
 from logging import getLogger
 import os
 from typing import Any
@@ -76,22 +78,9 @@ class ADGroupService:
         ad_groups = self.sql_connection.session.query(ADGroup).all()
         return ad_groups
 
-    def set_group_type_name(self, ad_group: dict[str: Any]) -> str:
+    def set_group_type_name(self, ad_group: dict[str, Any]) -> None:
         '''Get name of type of group for the integer representing the group in AD'''
-        GROUP_TYPES = {
-            '2': 'Distribution Group - Global',
-            '4': 'Distribution Group - Domain Local',
-            '8': 'Distribution Group - Universal',
-            '-2147483646': 'Security Group - Global',
-            '-2147483644': 'Security Group - Domain Local',
-            '-2147483643': 'Security Group - Domain Local',
-            '-2147483640': 'Security Group - Universal'
-        }
-        group_type = str(ad_group['groupType'])
-        if group_type not in GROUP_TYPES:
-            ad_group['groupType_name'] = 'N/A'
-        else:
-            ad_group['groupType_name'] = GROUP_TYPES[group_type]
+        ad_group['groupType_name'] = ADGroup.get_group_type_name(ad_group['groupType'])
 
     @timing_decorator
     def update_group_db(self):
@@ -171,7 +160,10 @@ class ADGroupService:
             changes (list[tuple[str, Any]]): A list of attribute changes to apply.
                 Each tuple consists of an attribute name and its new value.
                 For example:
-                    [('description', 'New Description'), ('managedBy', 'CN=Manager,OU=Users,DC=example,DC=com')]
+                    [
+                        ('description', 'New Description'),
+                        ('managedBy', 'CN=Manager,OU=Users,DC=example,DC=com'),
+                    ]
 
         Returns:
             dict[str, Any]: A dictionary containing the result of the modify operation with the

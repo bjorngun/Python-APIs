@@ -5,9 +5,10 @@ organizational units.
 
 from logging import getLogger
 from os import getenv
-from typing import Any
 
 from dateutil import parser
+
+# pylint: disable=invalid-name
 
 from dev_tools import timing_decorator
 from python_apis.apis import JiraConnection, SQLConnection
@@ -77,11 +78,13 @@ class JiraService:
 
     @timing_decorator
     def get_issies_from_db(self) -> list[JiraIssue]:
+        """Retrieve all Jira issues from the database."""
         jira_issues = self.sql_connection.session.query(JiraIssue).all()
         return jira_issues
 
     @timing_decorator
     def get_components_from_db(self) -> list[JiraComponent]:
+        """Retrieve all Jira components from the database."""
         jira_components = self.sql_connection.session.query(JiraComponent).all()
         return jira_components
 
@@ -126,26 +129,26 @@ class JiraService:
         """
         if datetime_str:
             return parser.isoparse(datetime_str)
-        else:
-            return None
+        return None
 
     def _raw_issue_to_object(self, issue_data: dict[str, dict]):
+        """Convert raw issue data from Jira into a :class:`JiraIssue`."""
         fields: dict[str, dict] = issue_data.get('fields', {})
 
         issue = JiraIssue(
-            id=int(issue_data.get('id')),
-            key=issue_data.get('key'),
-            summary=fields.get('summary'),
-            description=self.extract_description(fields.get('description')),
-            status=fields.get('status', {}).get('name'),
-            priority=fields.get('priority', {}).get('name'),
-            issueType=fields.get('issuetype', {}).get('name'),
-            created=self.parse_datetime(fields.get('created')),
-            updated=self.parse_datetime(fields.get('updated')),
-            project_key=fields.get('project', {}).get('key'),
-            project_name=fields.get('project', {}).get('name'),
-            projectId=fields.get('project', {}).get('id'),
-        )
+                id=int(issue_data.get('id')),
+                key=issue_data.get('key'),
+                summary=fields.get('summary'),
+                description=self.extract_description(fields.get('description')),
+                status=fields.get('status', {}).get('name'),
+                priority=fields.get('priority', {}).get('name'),
+                issue_type=fields.get('issuetype', {}).get('name'),
+                created=self.parse_datetime(fields.get('created')),
+                updated=self.parse_datetime(fields.get('updated')),
+                project_key=fields.get('project', {}).get('key'),
+                project_name=fields.get('project', {}).get('name'),
+                project_id=fields.get('project', {}).get('id'),
+            )
 
         # Handle parent for sub-tasks
         parent: dict[str, str] = fields.get('parent', {})
@@ -161,14 +164,14 @@ class JiraService:
 
         # Handle assignee
         assignee: dict[str, str] = fields.get('assignee', {})
-        issue.assignee_displayName = assignee.get('displayName') if assignee else None
-        issue.assignee_accountId = assignee.get('accountId') if assignee else None
+        issue.assignee_display_name = assignee.get('displayName') if assignee else None
+        issue.assignee_account_id = assignee.get('accountId') if assignee else None
         issue.assignee_active = assignee.get('active') if assignee else None
 
         # Handle reporter
         reporter: dict[str, dict] = fields.get('reporter', {})
-        issue.reporter_displayName = reporter.get('displayName')
-        issue.reporter_accountId = reporter.get('accountId')
+        issue.reporter_display_name = reporter.get('displayName')
+        issue.reporter_account_id = reporter.get('accountId')
         issue.reporter_active = reporter.get('active')
         issue.reporter_email_address = reporter.get('emailAddress')
 
@@ -182,7 +185,7 @@ class JiraService:
 
         # Handle fixVersions
         fix_versions: list[dict] = fields.get('fixVersions', [])
-        issue.fixVersions = ', '.join([version.get('name') for version in fix_versions])
+        issue.fix_versions = ', '.join([version.get('name') for version in fix_versions])
 
         # Handle attachments
         attachments: list[dict] = fields.get('attachment', [])
@@ -218,6 +221,7 @@ class JiraService:
 
     @timing_decorator
     def get_issues_from_jira(self, start_at: int = 0) -> list[JiraIssue]:
+        """Retrieve issues from Jira recursively starting at ``start_at``."""
         url_suffix = 'search'
         parameters = {
             "jql": "project=UT",
@@ -237,6 +241,7 @@ class JiraService:
         return jira_issues
 
     def get_request_types_from_jira(self) -> list[JiraRequestType]:
+        """Fetch request types from Jira Service Desk."""
         servicedesk_endpoint = getenv('JIRA_SERVICEDESK_ENDPOINT')
         url_suffix = 'servicedeskapi/requesttype'
         parameters = {
@@ -266,6 +271,7 @@ class JiraService:
 
     @timing_decorator
     def get_components_from_jira(self) -> list[JiraComponent]:
+        """Retrieve all components from Jira."""
         raw_components = self.jira_connection.get_objects(JiraComponent.URL_SUFFIX)
         jira_components = []
 
@@ -275,28 +281,28 @@ class JiraService:
                 name=comp_data.get('name'),
                 description=comp_data.get('description'),
                 assigneeType=comp_data.get('assigneeType'),
-                realAssigneeType=comp_data.get('realAssigneeType'),
+                real_assignee_type=comp_data.get('realAssigneeType'),
                 project=comp_data.get('project'),
-                projectId=comp_data.get('projectId'),
+                project_id=comp_data.get('projectId'),
             )
 
             # Handle 'lead' nested dictionary
             lead = comp_data.get('lead', {})
-            component.lead_displayName = lead.get('displayName', None)
-            component.lead_accountId = lead.get('accountId', None)
+            component.lead_display_name = lead.get('displayName', None)
+            component.lead_account_id = lead.get('accountId', None)
             component.lead_active = lead.get('active', None)
 
             # Handle 'assignee' nested dictionary (if present)
             assignee = comp_data.get('assignee', {})
-            component.assignee_displayName = assignee.get('displayName', None)
-            component.assignee_accountId = assignee.get('accountId', None)
+            component.assignee_display_name = assignee.get('displayName', None)
+            component.assignee_account_id = assignee.get('accountId', None)
             component.assignee_active = assignee.get('active', None)
 
             # Handle 'realAssignee' nested dictionary (if present)
             real_assignee = comp_data.get('realAssignee', {})
-            component.realAssignee_displayName = real_assignee.get('displayName', None)
-            component.realAssignee_accountId = real_assignee.get('accountId', None)
-            component.realAssignee_active = real_assignee.get('active', None)
+            component.real_assignee_display_name = real_assignee.get('displayName', None)
+            component.real_assignee_account_id = real_assignee.get('accountId', None)
+            component.real_assignee_active = real_assignee.get('active', None)
 
             jira_components.append(component)
 
@@ -304,6 +310,7 @@ class JiraService:
 
     @timing_decorator
     def update_components_db(self):
+        """Update the components table with data fetched from Jira."""
         jira_components = self.get_components_from_jira()
         try:
             self.sql_connection.session.query(JiraComponent).delete()
@@ -319,6 +326,7 @@ class JiraService:
 
     @timing_decorator
     def update_issues_db(self):
+        """Update the issues table with data fetched from Jira."""
         jira_issues: list[JiraIssue] = self.get_issues_from_jira()
         try:
             self.sql_connection.update(jira_issues)
@@ -330,6 +338,7 @@ class JiraService:
 
     @timing_decorator
     def update_request_types_db(self):
+        """Update the request types table with data fetched from Jira."""
         jira_request_types: list[JiraRequestType] = self.get_request_types_from_jira()
         try:
             self.sql_connection.update(jira_request_types)

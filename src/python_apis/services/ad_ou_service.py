@@ -3,6 +3,8 @@ Module providing the ADOrganizationalUnitService class for interacting with Acti
 organizational units.
 """
 
+# pylint: disable=duplicate-code
+
 from logging import getLogger
 import os
 from typing import Any, Optional

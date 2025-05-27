@@ -2,6 +2,8 @@
 Module providing the ADUserService class for interacting with Active Directory users.
 """
 
+# pylint: disable=duplicate-code
+
 from logging import getLogger
 import os
 from typing import Any

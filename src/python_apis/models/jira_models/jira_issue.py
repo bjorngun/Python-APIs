@@ -16,7 +16,7 @@ Methods:
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, Text
 from python_apis.models.base import Base
 
-class JiraIssue(Base):
+class JiraIssue(Base):  # pylint: disable=too-few-public-methods
     """
     Jira Issue model representing issue attributes in the database.
 
@@ -32,14 +32,15 @@ class JiraIssue(Base):
     description = Column(Text, nullable=True)
     status = Column(String(255), nullable=False)  # Status name (e.g., "To Do", "In Progress")
     priority = Column(String(255), nullable=True)  # Priority level
-    issueType = Column(String(255), nullable=False)  # Type of the issue (e.g., Bug, Task)
+    issue_type = Column('issueType', String(255), nullable=False)
+    # Type of the issue (e.g., Bug, Task)
 
-    assignee_displayName = Column(String(255), nullable=True)
-    assignee_accountId = Column(String(255), nullable=True)
+    assignee_display_name = Column('assignee_displayName', String(255), nullable=True)
+    assignee_account_id = Column('assignee_accountId', String(255), nullable=True)
     assignee_active = Column(Boolean, nullable=True)
 
-    reporter_displayName = Column(String(255), nullable=True)
-    reporter_accountId = Column(String(255), nullable=True)
+    reporter_display_name = Column('reporter_displayName', String(255), nullable=True)
+    reporter_account_id = Column('reporter_accountId', String(255), nullable=True)
     reporter_active = Column(Boolean, nullable=True)
     reporter_email_address = Column(String(255), nullable=True)
 
@@ -49,12 +50,12 @@ class JiraIssue(Base):
 
     project_key = Column(String(255), nullable=True)  # Project key
     project_name = Column(String(255), nullable=True)  # Project name
-    projectId = Column(String(255), nullable=True)
+    project_id = Column('projectId', String(255), nullable=True)
 
     request_type_id = Column(String(255), nullable=True)
     request_type_name = Column(String(255), nullable=True)
     request_type_description = Column(String(255), nullable=True)
-    
+
     parent_id = Column(Integer, nullable=True)  # For sub-tasks
     parent_key = Column(String(255), nullable=True)  # For sub-tasks
     parent_summary = Column(String(255), nullable=True)  # For sub-tasks
@@ -77,7 +78,8 @@ class JiraIssue(Base):
     components = Column(String(1023), nullable=True)  # Comma-separated list of component names
     labels = Column(String(1023), nullable=True)  # Comma-separated list of labels
     resolution = Column(String(255), nullable=True)  # Resolution status, if resolved
-    fixVersions = Column(String(1023), nullable=True)  # Comma-separated fix versions
+    fix_versions = Column('fixVersions', String(1023), nullable=True)
+    # Comma-separated fix versions
     attachment_count = Column(Integer, nullable=True)  # Number of attachments
 
     def __repr__(self):

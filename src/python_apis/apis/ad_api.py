@@ -18,12 +18,12 @@ from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
 
 class ADConnectionError(Exception):
     """Custom exception for errors related to Active Directory connections."""
-    pass
+
 
 
 class ADMissingServersError(Exception):
     """Custom exception for errors related to missing Active Directory servers."""
-    pass
+
 
 
 class ADConnection:
@@ -71,7 +71,9 @@ class ADConnection:
         )
         return entry_generator
 
-    def search(self, search_filter: str, attributes: list[str] | None = None) -> list[dict[str, str]]:
+    def search(
+        self, search_filter: str, attributes: list[str] | None = None
+    ) -> list[dict[str, str]]:
         """Returns a single result or false if none exist.
 
         Args:
@@ -194,6 +196,11 @@ class ADConnection:
         return self.remove_value(group_dn, changes)
 
     def set_ou_for_object(self, ad_object: dict[str, Any]) -> None:
+        """Add the OU extracted from ``distinguishedName`` to ``ad_object``.
+
+        This helper modifies ``ad_object`` in place if the object does not
+        already contain the ``ou`` key.
+        """
         if 'distinguishedName' in ad_object and 'ou' not in ad_object:
             if ',' not in ad_object['distinguishedName']:
                 return

@@ -4,6 +4,8 @@ api's with the models.  I expect in most cases there has to be a custom service
 module or a few of them.
 """
 
+# pylint: disable=duplicate-code
+
 from python_apis.services.ad_group_service import ADGroupService
 from python_apis.services.ad_user_service import ADUserService
 from python_apis.services.ad_ou_service import ADOrganizationalUnitService

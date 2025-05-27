@@ -2,6 +2,8 @@
 Module providing the ADGroupService class for interacting with Active Directory groups.
 """
 
+# pylint: disable=duplicate-code
+
 from logging import getLogger
 import os
 from typing import Any

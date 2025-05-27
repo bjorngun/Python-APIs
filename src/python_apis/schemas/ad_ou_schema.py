@@ -5,6 +5,8 @@ Module containing the ADOrganizationalUnitSchema class for data validation of Ac
 Organizational Unit (OU) attributes using Pydantic.
 """
 
+# pylint: disable=duplicate-code
+
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, field_validator, ValidationInfo

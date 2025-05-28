@@ -30,13 +30,16 @@ jobs:
     - name: Display Python version
       run: python -c "import sys; print(sys.version)"
 
-    - name: Install all dependencies
+    - name: Install dependencies (platform-specific)
       run: |
         python -m pip install --upgrade pip
-        pip install .[test,lint,publish]
-        pip install build
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          pip install ".[test,lint,publish,windows]"
+        else
+          pip install ".[test,lint,publish,linux]"
+        fi
 
-    - name: Lint code (only run on Windows + Python 3.13)
+    - name: Run linter (only on Windows + Python 3.13)
       if: matrix.os == 'windows-latest' && matrix.python-version == '3.13'
       run: |
         pylint --rcfile=.pylintrc src/python_apis/
@@ -47,7 +50,7 @@ jobs:
       run: |
         python -m unittest discover -s src/tests -p "test_*.py" -v
 
-    - name: Build package (only run on Windows + Python 3.13)
+    - name: Build package (only on Windows + Python 3.13)
       if: matrix.os == 'windows-latest' && matrix.python-version == '3.13'
       run: python -m build
 
@@ -68,11 +71,10 @@ jobs:
       with:
         python-version: '3.13'
 
-    - name: Install dependencies
+    - name: Install publish dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install .[publish]
-        pip install build
+        pip install ".[publish,windows]"  # 'windows' included assuming Windows host
 
     - name: Build package
       run: python -m build

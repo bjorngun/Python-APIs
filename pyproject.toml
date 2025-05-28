@@ -26,8 +26,6 @@ dependencies = [
     'ldap3',
     'python-dotenv',
     'sqlalchemy',
-    'gssapi',
-    'winkerberos',
     'cryptography',
     'unidecode',
     'python-dateutil',
@@ -38,6 +36,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+windows = [
+    'winkerberos',
+]
+linux = [
+    'gssapi',
+]
 test = [
     'coverage',
 ]

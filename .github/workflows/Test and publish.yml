@@ -21,23 +21,23 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install system dependencies (Ubuntu only)
+    - name: Install system dependencies for Linux
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install -y libkrb5-dev
+        python -m pip install --upgrade pip
+        pip install ".[test,lint,publish,linux]"
+
+    - name: Install system dependencies for Windows
+      if: runner.os == 'Windows'
+      run: |
+        choco install -y python
+        python -m pip install --upgrade pip
+        pip install ".[test,lint,publish,windows]"
 
     - name: Display Python version
       run: python -c "import sys; print(sys.version)"
-
-    - name: Install dependencies (platform-specific)
-      run: |
-        python -m pip install --upgrade pip
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          pip install ".[test,lint,publish,windows]"
-        else
-          pip install ".[test,lint,publish,linux]"
-        fi
 
     - name: Run linter (only on Windows + Python 3.13)
       if: matrix.os == 'windows-latest' && matrix.python-version == '3.13'

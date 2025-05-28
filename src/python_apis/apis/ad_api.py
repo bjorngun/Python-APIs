@@ -50,10 +50,10 @@ class ADConnection:
 
         # Determine SASL mechanism based on OS
         if platform.system().lower() == "windows":
-            from ldap3 import KERBEROS
+            from ldap3 import KERBEROS  # pylint: disable=import-outside-toplevel
             sasl_mechanism = KERBEROS
         else:
-            from ldap3 import GSSAPI
+            from ldap3 import GSSAPI  # pylint: disable=import-outside-toplevel
             sasl_mechanism = GSSAPI
 
         connection = Connection(

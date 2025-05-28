@@ -14,7 +14,7 @@ from typing import Any
 
 from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, Connection,
-                   Server, ServerPool, Tls, GSSAPI, KERBEROS)
+                   Server, ServerPool, Tls)
 
 
 
@@ -50,8 +50,10 @@ class ADConnection:
 
         # Determine SASL mechanism based on OS
         if platform.system().lower() == "windows":
+            from ldap3 import KERBEROS
             sasl_mechanism = KERBEROS
         else:
+            from ldap3 import GSSAPI
             sasl_mechanism = GSSAPI
 
         connection = Connection(

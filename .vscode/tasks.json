@@ -38,14 +38,13 @@
             "group": {
                 "kind": "build",
                 "isDefault": true
-            },
-            "dependsOn": "Create virtual environment (Windows)"
+            }
         },
         {
             "label": "Install requirements",
             "type": "shell",
             "command": "${workspaceFolder}/venv/Scripts/python.exe",
-            "args": ["-m", "pip", "install", "-e", "."],
+            "args": ["-m", "pip", "install", "-e", ".[windows]"],
             "problemMatcher": [],
             "dependsOn": "Upgrade pip"
         },

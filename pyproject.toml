@@ -27,6 +27,7 @@ dependencies = [
     'python-dotenv',
     'sqlalchemy',
     'gssapi',
+    'winkerberos',
     'cryptography',
     'unidecode',
     'python-dateutil',

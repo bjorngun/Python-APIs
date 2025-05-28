@@ -261,4 +261,4 @@ class ADOrganizationalUnitService:
         Returns:
             list[str]: The list of attributes.
         """
-        return ADOrganizationalUnitService.attributes()
+        return ADOrganizationalUnit.get_attribute_list()

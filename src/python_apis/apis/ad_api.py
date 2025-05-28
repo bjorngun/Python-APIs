@@ -8,12 +8,14 @@ AD to run it effectively.
 """
 
 import collections
+import platform
 import ssl
 from typing import Any
 
 from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, Connection,
-                   Server, ServerPool, Tls, GSSAPI)
+                   Server, ServerPool, Tls, GSSAPI, KERBEROS)
+
 
 
 class ADConnectionError(Exception):
@@ -45,13 +47,19 @@ class ADConnection:
         ldap_servers = [Server(x, use_ssl=True, tls=tls) for x in servers]
 
         server_pool = ServerPool(ldap_servers, ROUND_ROBIN, active=True, exhaust=True)
+
+        # Determine SASL mechanism based on OS
+        if platform.system().lower() == "windows":
+            sasl_mechanism = KERBEROS
+        else:
+            sasl_mechanism = GSSAPI
+
         connection = Connection(
             server_pool,
             authentication=SASL,
-            sasl_mechanism=GSSAPI,
+            sasl_mechanism=sasl_mechanism,
             receive_timeout=10,
         )
-
         if not connection.bind():
             raise ADConnectionError(
                 f"Failed to bind to Active Directory: {connection.result['description']}"

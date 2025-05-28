@@ -1,0 +1,86 @@
+name: Test, Lint, and Publish Package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test-lint:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+    - uses: actions/checkout@v4.2.2
+
+    - name: Set up Python
+      uses: actions/setup-python@v5.6.0
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install system dependencies for Linux
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libkrb5-dev
+        python -m pip install --upgrade pip
+        pip install ".[test,lint,publish,linux]"
+
+    - name: Install system dependencies for Windows
+      if: runner.os == 'Windows'
+      run: |
+        choco install -y python
+        python -m pip install --upgrade pip
+        pip install ".[test,lint,publish,windows]"
+
+    - name: Display Python version
+      run: python -c "import sys; print(sys.version)"
+
+    - name: Run linter (only on Windows + Python 3.13)
+      if: matrix.os == 'windows-latest' && matrix.python-version == '3.13'
+      run: |
+        pylint --rcfile=.pylintrc src/python_apis/
+
+    - name: Run tests
+      env:
+        PYTHONPATH: src
+      run: |
+        python -m unittest discover -s src/tests -p "test_*.py" -v
+
+    - name: Build package (only on Windows + Python 3.13)
+      if: matrix.os == 'windows-latest' && matrix.python-version == '3.13'
+      run: python -m build
+
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+      uses: codecov/codecov-action@v5.4.3
+      with:
+        file: ./coverage.xml
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+  publish:
+    needs: build-test-lint
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4.2.2
+    - uses: actions/setup-python@v5.6.0
+      with:
+        python-version: '3.13'
+
+    - name: Install publish dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install ".[publish,windows]"  # 'windows' included assuming Windows host
+
+    - name: Build package
+      run: python -m build
+
+    - name: Publish to PyPI
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+      run: python -m twine upload dist/*

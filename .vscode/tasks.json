@@ -44,7 +44,7 @@
             "label": "Install requirements",
             "type": "shell",
             "command": "${workspaceFolder}/venv/Scripts/python.exe",
-            "args": ["-m", "pip", "install", "-e", ".[windows]"],
+            "args": ["-m", "pip", "install", "-e", "."],
             "problemMatcher": [],
             "dependsOn": "Upgrade pip"
         },

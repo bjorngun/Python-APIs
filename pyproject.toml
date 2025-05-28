@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'python_apis'
-version = '0.3.2'
+version = '0.3.3'
 authors = [
   { name="Björn Gunnarsson", email="bjorngun@kopavogur.is" },
 ]
@@ -27,8 +27,8 @@ dependencies = [
     'python-dotenv',
     'sqlalchemy',
     'cryptography',
-    'winkerberos',
-    'gssapi',
+    'winkerberos; sys_platform == "win32"',
+    'gssapi; sys_platform != "win32"',
     'unidecode',
     'python-dateutil',
     'pydantic',

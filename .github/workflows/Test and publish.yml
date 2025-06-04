@@ -86,8 +86,10 @@ jobs:
 
     - name: Install Ruby and changelog generator
       run: |
+        sudo apt-get update
         sudo apt-get install -y ruby-full
-        gem install github_changelog_generator
+        gem install --user-install github_changelog_generator
+        echo "PATH=$(ruby -e 'puts File.join(Gem.user_dir, "bin")'):$PATH" >> $GITHUB_ENV
 
     - name: Generate changelog
       run: |

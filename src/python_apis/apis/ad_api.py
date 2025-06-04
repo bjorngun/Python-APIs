@@ -8,13 +8,13 @@ AD to run it effectively.
 """
 
 import collections
-import platform
 import ssl
 from typing import Any
 
+from ldap3.utils.log import set_library_log_detail_level, BASIC
 from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
-                   MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, Connection,
-                   Server, ServerPool, Tls)
+                   MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, GSSAPI,
+                   Connection, Server, ServerPool, Tls)
 
 
 
@@ -33,7 +33,10 @@ class ADConnection:
     connection and the methods that gets data from AD and can modify the AD.
     """
 
-    def __init__(self, servers: list, search_base: str):
+    def __init__(self, servers: list, search_base: str, enable_ldap_logging: bool = False):
+        if enable_ldap_logging:
+            set_library_log_detail_level(BASIC)
+
         self.ad_connection = self._get_ad_connection(servers)
         self.search_base = search_base
 
@@ -48,18 +51,10 @@ class ADConnection:
 
         server_pool = ServerPool(ldap_servers, ROUND_ROBIN, active=True, exhaust=True)
 
-        # Determine SASL mechanism based on OS
-        if platform.system().lower() == "windows":
-            from ldap3 import KERBEROS  # pylint: disable=import-outside-toplevel
-            sasl_mechanism = KERBEROS
-        else:
-            from ldap3 import GSSAPI  # pylint: disable=import-outside-toplevel
-            sasl_mechanism = GSSAPI
-
         connection = Connection(
             server_pool,
             authentication=SASL,
-            sasl_mechanism=sasl_mechanism,
+            sasl_mechanism=GSSAPI,
             receive_timeout=10,
         )
         if not connection.bind():

@@ -20,7 +20,8 @@ class ADUserService:
     """Service class for interacting with Active Directory users.
     """
 
-    def __init__(self, ad_connection: ADConnection = None, sql_connection: SQLConnection = None):
+    def __init__(self, ad_connection: ADConnection = None, sql_connection: SQLConnection = None,
+                 ldap_logging: bool = False):
         """Initialize the ADUserService with an ADConnection and an SQLConnection.
 
         Args:
@@ -28,6 +29,7 @@ class ADUserService:
                 If None, a new one will be created.
             sql_connection (SQLConnection, optional): An existing SQLConnection instance.
                 If None, a new one will be created.
+            ldap_logging (bool, optional): Whether to enable LDAP logging. Defaults to False.
         """
         self.logger = getLogger(__name__)
 
@@ -36,7 +38,7 @@ class ADUserService:
         self.sql_connection = sql_connection
 
         if ad_connection is None:
-            ad_connection = self._get_ad_connection()
+            ad_connection = self._get_ad_connection(ldap_logging)
         self.ad_connection = ad_connection
 
     def _get_sql_connection(self) -> SQLConnection:
@@ -47,7 +49,7 @@ class ADUserService:
         )
 
     @timing_decorator
-    def _get_ad_connection(self) -> ADConnection:
+    def _get_ad_connection(self, ldap_logging: bool) -> ADConnection:
         """Create and return an ADConnection instance.
 
         Returns:
@@ -55,7 +57,7 @@ class ADUserService:
         """
         ad_servers = os.getenv("LDAP_SERVER_LIST").split()
         search_base = os.getenv("SEARCH_BASE")
-        ad_connection = ADConnection(ad_servers, search_base)
+        ad_connection = ADConnection(ad_servers, search_base, ldap_logging)
         return ad_connection
 
     @timing_decorator

@@ -65,10 +65,11 @@ jobs:
 
   publish:
     needs: build-test-lint
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
     - uses: actions/checkout@v4.2.2
+
     - uses: actions/setup-python@v5.6.0
       with:
         python-version: '3.13'
@@ -77,6 +78,48 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install ".[publish]"
+
+    - name: Install Ruby and changelog generator
+      run: |
+        sudo apt-get install -y ruby-full
+        gem install github_changelog_generator
+
+    - name: Generate changelog
+      run: |
+        LATEST_TAG=$(git describe --tags --abbrev=0 || echo "")
+        github_changelog_generator \
+          --user bjorngun \
+          --project Python-APIs \
+          --token ${{ secrets.GITHUB_TOKEN }} \
+          ${LATEST_TAG:+--since-tag $LATEST_TAG} \
+          --output CHANGELOG.md
+
+    - name: Bump patch version
+      id: bump
+      run: bash .github/scripts/bump-version.sh patch
+
+    - name: Commit version bump and changelog
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add pyproject.toml CHANGELOG.md
+        git commit -m "Bump ${{ steps.bump.outputs.bump_type }} version to v${{ steps.bump.outputs.new_version }} [skip ci]"
+        git push
+
+    - name: Tag the new version
+      run: |
+        git tag v${{ steps.bump.outputs.new_version }}
+        git push origin v${{ steps.bump.outputs.new_version }}
+
+    - name: Conditionally create GitHub release
+      if: steps.bump.outputs.bump_type != 'patch'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.bump.outputs.new_version }}
+        name: Release v${{ steps.bump.outputs.new_version }}
+        body_path: CHANGELOG.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Build package
       run: python -m build

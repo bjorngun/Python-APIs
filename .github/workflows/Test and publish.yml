@@ -84,22 +84,13 @@ jobs:
         python -m pip install --upgrade pip
         pip install ".[publish]"
 
-    - name: Install Ruby and changelog generator
+    - name: Install auto-changelog
       run: |
-        sudo apt-get update
-        sudo apt-get install -y ruby-full
-        gem install --user-install github_changelog_generator
-        echo "PATH=$(ruby -e 'puts File.join(Gem.user_dir, "bin")'):$PATH" >> $GITHUB_ENV
+        npm install -g auto-changelog
 
     - name: Generate changelog
       run: |
-        LATEST_TAG=$(git describe --tags --abbrev=0 || echo "")
-        github_changelog_generator \
-          --user bjorngun \
-          --project Python-APIs \
-          --token ${{ secrets.GITHUB_TOKEN }} \
-          ${LATEST_TAG:+--since-tag $LATEST_TAG} \
-          --output CHANGELOG.md
+        auto-changelog --commit-limit false --output CHANGELOG.md
 
     - name: Bump patch version
       id: bump

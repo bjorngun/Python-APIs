@@ -27,7 +27,7 @@ esac
 
 NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
-sed -i "s/version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" pyproject.toml
+sed -i "s/version = ['\"]${CURRENT_VERSION}['\"]/version = \"${NEW_VERSION}\"/" pyproject.toml
 
 echo "Bumped $PART version: $CURRENT_VERSION -> $NEW_VERSION"
 echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"

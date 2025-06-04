@@ -3,7 +3,7 @@ set -eu
 
 PART="${1:-patch}"
 
-CURRENT_VERSION=$(grep -Po 'version = "\K[0-9]+\.[0-9]+\.[0-9]+' pyproject.toml)
+CURRENT_VERSION=$(grep -Po 'version\s*=\s*["'\'']\K[0-9]+\.[0-9]+\.[0-9]+' pyproject.toml)
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 
 case "$PART" in

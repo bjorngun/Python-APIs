@@ -33,9 +33,8 @@ jobs:
     - name: Install system dependencies for Windows
       if: runner.os == 'Windows'
       run: |
-        choco install -y python
         python -m pip install --upgrade pip
-        pip install ".[test,lint,publish]"
+        python -m pip install ".[test,lint,publish]"
         python -c "from ldap3 import KERBEROS; print('KERBEROS OK')"
 
     - name: Display Python version

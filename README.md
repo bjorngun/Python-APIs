@@ -1,5 +1,13 @@
 # Python APIs for Active Directory and SQL Integration
 
+[![Python Versions](https://img.shields.io/pypi/pyversions/python-apis.svg?logo=python&logoColor=white)](https://pypi.org/project/python-apis/#files)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20windows-lightgrey)](https://pypi.org/project/python-apis/#files)
+[![PyPI Version](https://img.shields.io/pypi/v/python-apis)](https://pypi.org/project/python-apis/#history)
+[![PyPI status](https://img.shields.io/pypi/status/python-apis.svg)](https://pypi.python.org/pypi/python-apis/)
+[![Github Actions Test and Publish Status](https://github.com/bjorngun/Python-APIs/actions/workflows/Test%20and%20publish.yml/badge.svg)](https://github.com/bjorngun/Python-APIs/actions)
+[![codecov](https://codecov.io/gh/bjorngun/Python-APIs/graph/badge.svg)](https://codecov.io/gh/bjorngun/Python-APIs)
+[![License](https://img.shields.io/pypi/l/python-apis)](LICENSE)
+
 Welcome to the **Python APIs for Active Directory and SQL Integration** project. This repository provides a set of Python modules and classes designed to interact with Active Directory (AD) and SQL databases seamlessly. It facilitates operations such as querying AD users, managing SQL database connections, and synchronizing data between AD and SQL.
 
 ## Table of Contents
@@ -56,7 +64,7 @@ This project aims to simplify the integration between Python applications, Activ
 1. **Clone the Repository**
 
    ```bash
-   git clone https://github.com/Kopavogur/python-apis.git
+   git clone https://github.com/bjorngun/python-apis.git
    cd python-apis
    ```
 

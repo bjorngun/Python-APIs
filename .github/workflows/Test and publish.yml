@@ -27,7 +27,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libkrb5-dev
         python -m pip install --upgrade pip
-        pip install ".[test]"
+        python -m pip install ".[test]"
         python -c "from ldap3 import GSSAPI; print('GSSAPI OK')"
 
     - name: Install system dependencies for Windows

@@ -111,7 +111,7 @@ jobs:
 
     - name: Conditionally create GitHub release
       if: steps.bump.outputs.bump_type != 'patch'
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2.3.2
       with:
         tag_name: v${{ steps.bump.outputs.new_version }}
         name: Release v${{ steps.bump.outputs.new_version }}

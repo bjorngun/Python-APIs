@@ -7,6 +7,6 @@ for storing employee details.
 The environment variables `EMPLOYEE_DB_TABLE` and `EMPLOYEE_DB_SCHEMA` can be set
 to customize the table name and schema used for the `Employee` model.
 """
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()

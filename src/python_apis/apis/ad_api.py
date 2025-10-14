@@ -17,15 +17,12 @@ from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
                    Connection, Server, ServerPool, Tls)
 
 
-
 class ADConnectionError(Exception):
     """Custom exception for errors related to Active Directory connections."""
 
 
-
 class ADMissingServersError(Exception):
     """Custom exception for errors related to missing Active Directory servers."""
-
 
 
 class ADConnection:
@@ -200,14 +197,62 @@ class ADConnection:
         changes = {'member': user_dn}
         return self.remove_value(group_dn, changes)
 
+    def move_entry(self, distinguished_name: str, new_ou_dn: str) -> dict[str, Any]:
+        """Move an AD object to the provided OU while keeping the same relative DN.
+
+        Args:
+            distinguished_name (str): Current distinguished name for the AD object.
+            new_ou_dn (str): Target OU distinguished name to move the object under.
+
+        Returns:
+            dict[str, Any]: Result payload containing the LDAP response and success flag.
+        """
+
+        relative_dn = distinguished_name.split(',', 1)[0]
+        success = self.ad_connection.modify_dn(
+            distinguished_name,
+            relative_dn,
+            new_superior=new_ou_dn,
+        )
+        return {'result': self.ad_connection.result, 'success': success}
+
     def set_ou_for_object(self, ad_object: dict[str, Any]) -> None:
         """Add the OU extracted from ``distinguishedName`` to ``ad_object``.
 
         This helper modifies ``ad_object`` in place if the object does not
         already contain the ``ou`` key.
         """
+
         if 'distinguishedName' in ad_object and 'ou' not in ad_object:
             if ',' not in ad_object['distinguishedName']:
                 return
             ou = ','.join(ad_object['distinguishedName'].split(',')[1:])
             ad_object['ou'] = ou
+
+    # ---------------------------------------------------------------------
+    # Create new user
+    # ---------------------------------------------------------------------
+    def add_entry(self, distinguished_name: str, attributes: dict[str, object]) -> dict[str, Any]:
+        """Create a new AD object (e.g., user) at the given DN with the provided attributes.
+        `attributes` MUST include a valid objectClass list,
+        e.g., ['top', 'person', 'organizationalPerson', 'user'].
+        """
+
+        success = self.ad_connection.add(distinguished_name, attributes=attributes)
+        return {'result': self.ad_connection.result, 'success': success}
+
+    def set_password(self, distinguished_name: str, new_password: str) -> dict[str, Any]:
+        """Set the user's password. Requires LDAPS/StartTLS and appropriate rights.
+        """
+
+        password_ext = self.ad_connection.extend.microsoft
+        success = password_ext.modify_password(distinguished_name, new_password)
+        return {'result': self.ad_connection.result, 'success': success}
+
+    def enable_user(self, distinguished_name: str) -> dict[str, Any]:
+        """Enable an AD user by setting userAccountControl to 512 (NORMAL_ACCOUNT).
+        """
+
+        changes = {'userAccountControl': [MODIFY_REPLACE, 512]}
+        success = self.ad_connection.modify(distinguished_name, changes)
+        return {'result': self.ad_connection.result, 'success': success}

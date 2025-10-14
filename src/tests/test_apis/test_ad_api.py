@@ -113,6 +113,24 @@ class TestADConnection(unittest.TestCase):
         self.mock_connection.modify.assert_called_once_with(distinguished_name, expected_changes)
         self.assertTrue(result['success'])
 
+    def test_move_entry(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        distinguished_name = 'CN=John Doe,OU=users,DC=example,DC=com'
+        new_ou_dn = 'OU=new,DC=example,DC=com'
+
+        self.mock_connection.modify_dn.return_value = True
+        self.mock_connection.result = {'description': 'success'}
+
+        result = ad_conn.move_entry(distinguished_name, new_ou_dn)
+
+        self.mock_connection.modify_dn.assert_called_once_with(
+            distinguished_name,
+            'CN=John Doe',
+            new_superior=new_ou_dn,
+        )
+        self.assertTrue(result['success'])
+        self.assertEqual(result['result'], {'description': 'success'})
+
 
 if __name__ == '__main__':
     unittest.main()

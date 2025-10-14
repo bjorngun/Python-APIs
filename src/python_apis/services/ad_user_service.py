@@ -165,6 +165,50 @@ class ADUserService:
         """
         return self.ad_connection.remove_member(user.distinguishedName, group_dn)
 
+    def move_user_to_ou(self, user: ADUser, target_ou_dn: str) -> dict[str, Any]:
+        """Move a user to a different OU in Active Directory.
+
+        Args:
+            user (ADUser): The user to move.
+            target_ou_dn (str): Distinguished name for the destination OU.
+
+        Returns:
+            dict[str, Any]: Result payload from the move operation including success flag.
+        """
+
+        current_dn = user.distinguishedName
+        try:
+            response = self.ad_connection.move_entry(current_dn, target_ou_dn)
+        except LDAPException as e:
+            self.logger.error(
+                "Exception occurred while moving user %s to %s: %s",
+                getattr(user, 'sAMAccountName', '<unknown>'),
+                target_ou_dn,
+                str(e),
+            )
+            return {'success': False, 'result': str(e)}
+
+        result = dict(response) if response is not None else {'success': False, 'result': None}
+        if not result.get('success'):
+            self.logger.warning(
+                "Failed to move AD user %s to %s: %s",
+                getattr(user, 'sAMAccountName', '<unknown>'),
+                target_ou_dn,
+                result.get('result'),
+            )
+            return result
+
+        new_dn = f"{current_dn.split(',', 1)[0]},{target_ou_dn}"
+        user.distinguishedName = new_dn
+        user.ou = target_ou_dn
+        result['dn'] = new_dn
+        self.logger.info(
+            "Moved %s to new OU %s",
+            getattr(user, 'sAMAccountName', '<unknown>'),
+            target_ou_dn,
+        )
+        return result
+
     def modify_user(self, user: ADUser, changes: list[tuple[str, str]]) -> dict[str, Any]:
         """Modify attributes of a user in Active Directory.
 
@@ -224,3 +268,79 @@ class ADUserService:
             list[str]: The list of attributes.
         """
         return ADUser.get_attribute_list()
+
+
+    # ---------------------------------------------------------------------
+    # Create new user
+    # ---------------------------------------------------------------------
+    # in ADUserService (ad_user_service.py)
+
+    def _user_dn(self, cn: str, ou_dn: str) -> str:
+        return f"CN={cn},{ou_dn}"
+
+    def create_user(
+        self,
+        cn: str,
+        ou_dn: str,
+        attrs: dict[str, object],
+        **options: Any,
+    ) -> dict[str, Any]:
+        """
+        Create a user in AD under `ou_dn` with a Common Name `cn`.
+
+        Required:
+            - attrs['objectClass'] should include 'user'
+            - attrs should include minimal identity fields 
+                (e.g., sAMAccountName, userPrincipalName, sn, givenName, displayName)
+        Optional:
+            - set_password: if provided, sets the password post-create
+            - enable_after_create: if True, enables the user after create 
+                (requires password set first in most setups)
+        """
+        set_password = options.get('set_password')
+        enable_after_create = options.get('enable_after_create', False)
+        unexpected_options = set(options) - {'set_password', 'enable_after_create'}
+        if unexpected_options:
+            raise ValueError(f"Unsupported options provided: {sorted(unexpected_options)}")
+
+        dn = self._user_dn(cn, ou_dn)
+
+        # Build attributes for creation (objectClass MUST be present on add)
+        create_attrs = dict(attrs)
+        if 'objectClass' not in create_attrs:
+            create_attrs['objectClass'] = ['top', 'person', 'organizationalPerson', 'user']
+
+        try:
+            response = self.ad_connection.add_entry(dn, create_attrs)
+        except LDAPException as e:
+            self.logger.error("Failed to create AD user CN=%s in %s: %s", cn, ou_dn, e)
+            return {'success': False, 'result': str(e), 'dn': dn}
+
+        if not response.get('success'):
+            self.logger.warning("Create user failed for %s: %s", dn, response.get('result'))
+            return {'success': False, 'result': response.get('result'), 'dn': dn}
+
+        # Optional: set password then enable
+        if set_password:
+            pw_resp = self.ad_connection.set_password(dn, set_password)
+            if not pw_resp.get('success'):
+                self.logger.warning("Set password failed for %s: %s", dn, pw_resp.get('result'))
+                # You may choose to return failure or proceed; here we surface partial failure:
+                return {
+                    'success': False,
+                    'result': {'create': response.get('result'), 'password': pw_resp.get('result')},
+                    'dn': dn,
+                }
+
+        if enable_after_create:
+            en_resp = self.ad_connection.enable_user(dn)
+            if not en_resp.get('success'):
+                self.logger.warning("Enable user failed for %s: %s", dn, en_resp.get('result'))
+                return {
+                    'success': False,
+                    'result': {'create': response.get('result'), 'enable': en_resp.get('result')},
+                    'dn': dn,
+                }
+
+        self.logger.info("Created AD user: %s", dn)
+        return {'success': True, 'result': response.get('result'), 'dn': dn}

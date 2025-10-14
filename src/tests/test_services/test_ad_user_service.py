@@ -82,6 +82,46 @@ class TestADUserService(unittest.TestCase):
         self.mock_ad_connection.remove_member.assert_called_once_with('user_dn', 'group_dn')
         self.assertEqual(result, {'result': 'success'})
 
+    def test_move_user_to_ou_success(self):
+        service = ADUserService()
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = 'CN=John Doe,OU=users,DC=example,DC=com'
+        user.ou = 'OU=users,DC=example,DC=com'
+        user.sAMAccountName = 'jdoe'
+        target_ou_dn = 'OU=new,DC=example,DC=com'
+
+        self.mock_ad_connection.move_entry.return_value = {'success': True, 'result': 'success'}
+
+        result = service.move_user_to_ou(user, target_ou_dn)
+
+        self.mock_ad_connection.move_entry.assert_called_once_with(
+            'CN=John Doe,OU=users,DC=example,DC=com',
+            target_ou_dn,
+        )
+        self.assertEqual(user.distinguishedName, 'CN=John Doe,OU=new,DC=example,DC=com')
+        self.assertEqual(user.ou, target_ou_dn)
+        self.assertEqual(result['dn'], 'CN=John Doe,OU=new,DC=example,DC=com')
+
+    def test_move_user_to_ou_failure(self):
+        service = ADUserService()
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = 'CN=John Doe,OU=users,DC=example,DC=com'
+        user.ou = 'OU=users,DC=example,DC=com'
+        user.sAMAccountName = 'jdoe'
+        target_ou_dn = 'OU=new,DC=example,DC=com'
+
+        self.mock_ad_connection.move_entry.return_value = {'success': False, 'result': 'error'}
+
+        result = service.move_user_to_ou(user, target_ou_dn)
+
+        self.mock_ad_connection.move_entry.assert_called_once_with(
+            'CN=John Doe,OU=users,DC=example,DC=com',
+            target_ou_dn,
+        )
+        self.assertEqual(user.distinguishedName, 'CN=John Doe,OU=users,DC=example,DC=com')
+        self.assertEqual(user.ou, 'OU=users,DC=example,DC=com')
+        self.assertEqual(result, {'success': False, 'result': 'error'})
+
     def test_modify_user(self):
         service = ADUserService()
         user = MagicMock(spec=ADUser)

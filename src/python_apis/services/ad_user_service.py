@@ -149,7 +149,7 @@ class ADUserService:
         """
         attributes = ['sAMAccountName']
         ad_users_dict = self.ad_connection.search(search_filter, attributes)
-        sam_account_names = {str(user.get('sAMAccountName')) for user 
+        sam_account_names = {str(user.get('sAMAccountName')) for user
                              in ad_users_dict if 'sAMAccountName' in user}
         return sam_account_names
 

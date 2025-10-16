@@ -190,7 +190,7 @@ class ADUserService:
 
         current_dn = user.distinguishedName
         try:
-            response = self.ad_connection.move_entry(current_dn, target_ou_dn)
+            response = self.ad_connection.move_entry(str(current_dn), target_ou_dn)
         except LDAPException as e:
             self.logger.error(
                 "Exception occurred while moving user %s to %s: %s",
@@ -210,9 +210,9 @@ class ADUserService:
             )
             return result
 
-        new_dn = f"{current_dn.split(',', 1)[0]},{target_ou_dn}"
-        user.distinguishedName = new_dn
-        user.ou = target_ou_dn
+        new_dn = f"CN={user.sAMAccountName},{target_ou_dn}"
+        setattr(user, 'distinguishedName', new_dn)
+        setattr(user, 'ou', target_ou_dn)
         result['dn'] = new_dn
         self.logger.info(
             "Moved %s to new OU %s",
@@ -242,6 +242,8 @@ class ADUserService:
         change_affects = {k: f"{getattr(user, k)} -> {v}" for k, v in changes}
         try:
             response = self.ad_connection.modify(user.distinguishedName, changes)
+            for k, v in changes:
+                setattr(user, k, v)
         except LDAPException as e:
             self.logger.error(
                 "Exception occurred while modifying user %s: changes: %s error msg: %s",

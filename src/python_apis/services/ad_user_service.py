@@ -314,8 +314,7 @@ class ADUserService:
                 logon. Defaults to True.
         """
         try:
-            response = self.ad_connection.set_password(user.distinguishedName, new_password,
-                                                       must_change_at_next_logon)
+            response = self.ad_connection.set_password(str(user.distinguishedName), new_password)
             if not response.get('success'):
                 self.logger.warning("Failed to set password for user %s: %s", user.sAMAccountName,
                                     response.get('result'))

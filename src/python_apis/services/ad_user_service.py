@@ -153,6 +153,17 @@ class ADUserService:
                              in ad_users_dict if 'sAMAccountName' in user}
         return sam_account_names
 
+    def enable_user(self, user: ADUser) -> dict[str, Any]:
+        """Enable an Active Directory user.
+
+        Args:
+            user (ADUser): The user to enable.
+
+        Returns:
+            dict[str, Any]: The result of the enable operation.
+        """
+        return self.ad_connection.enable_user(user.distinguishedName)
+
     def add_member(self, user: ADUser, group_dn: str) -> dict[str, Any]:
         """Add a user to an Active Directory group.
 

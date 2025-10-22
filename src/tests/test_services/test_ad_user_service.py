@@ -1,11 +1,19 @@
 # test_ad_user_service.py
 
+import sys
+from pathlib import Path
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
+from ldap3.core.exceptions import LDAPException
+from pydantic import ValidationError
+
+SRC_ROOT = Path(__file__).resolve().parents[2]
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 from python_apis.services.ad_user_service import ADUserService
 from python_apis.models.ad_user import ADUser
 from python_apis.schemas.ad_user_schema import ADUserSchema
-from pydantic import ValidationError
 
 
 class TestADUserService(unittest.TestCase):
@@ -98,9 +106,9 @@ class TestADUserService(unittest.TestCase):
             'CN=John Doe,OU=users,DC=example,DC=com',
             target_ou_dn,
         )
-        self.assertEqual(user.distinguishedName, 'CN=John Doe,OU=new,DC=example,DC=com')
+        self.assertEqual(user.distinguishedName, 'CN=jdoe,OU=new,DC=example,DC=com')
         self.assertEqual(user.ou, target_ou_dn)
-        self.assertEqual(result['dn'], 'CN=John Doe,OU=new,DC=example,DC=com')
+        self.assertEqual(result['dn'], 'CN=jdoe,OU=new,DC=example,DC=com')
 
     def test_move_user_to_ou_failure(self):
         service = ADUserService()
@@ -145,6 +153,152 @@ class TestADUserService(unittest.TestCase):
         }
 
         self.assertEqual(result, expected_result)
+
+    def test_set_password_success(self):
+        service = ADUserService()
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = 'CN=John Doe,OU=users,DC=example,DC=com'
+        user.sAMAccountName = 'jdoe'
+        self.mock_ad_connection.set_password.return_value = {'success': True, 'result': 'ok'}
+
+        result = service.set_password(user, 'Sup3rSecure!', must_change_at_next_logon=False)
+
+        self.mock_ad_connection.set_password.assert_called_once_with(
+            'CN=John Doe,OU=users,DC=example,DC=com',
+            'Sup3rSecure!',
+            False,
+        )
+        self.assertEqual(result, {'success': True, 'result': 'ok'})
+
+    def test_set_password_failure_response(self):
+        service = ADUserService()
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = 'CN=Jane Doe,OU=users,DC=example,DC=com'
+        user.sAMAccountName = 'jadoe'
+        self.mock_ad_connection.set_password.return_value = {'success': False, 'result': 'error'}
+
+        result = service.set_password(user, 'Temp1234!')
+
+        self.assertEqual(result, {'success': False, 'result': 'error'})
+
+    def test_set_password_exception(self):
+        service = ADUserService()
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = 'CN=Jane Doe,OU=users,DC=example,DC=com'
+        user.sAMAccountName = 'jadoe'
+        self.mock_ad_connection.set_password.side_effect = LDAPException('boom')
+
+        result = service.set_password(user, 'Temp1234!')
+
+        self.assertEqual(result, {'success': False, 'result': 'boom'})
+
+    def test_create_user_success_with_defaults(self):
+        service = ADUserService()
+        self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
+
+        result = service.create_user(
+            'John Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jdoe'},
+        )
+
+        self.assertEqual(
+            self.mock_ad_connection.add_entry.call_args[0][0],
+            'CN=John Doe,OU=Users,DC=example,DC=com',
+        )
+        passed_attrs = self.mock_ad_connection.add_entry.call_args[0][1]
+        self.assertIn('objectClass', passed_attrs)
+        self.assertIn('user', passed_attrs['objectClass'])
+        self.assertEqual(
+            result,
+            {'success': True, 'result': 'created', 'dn': 'CN=John Doe,OU=Users,DC=example,DC=com'},
+        )
+
+    def test_create_user_add_entry_failure(self):
+        service = ADUserService()
+        self.mock_ad_connection.add_entry.return_value = {'success': False, 'result': 'error'}
+
+        result = service.create_user(
+            'Jane Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jadoe'},
+        )
+
+        self.assertEqual(
+            result,
+            {'success': False, 'result': 'error', 'dn': 'CN=Jane Doe,OU=Users,DC=example,DC=com'},
+        )
+
+    def test_create_user_password_failure(self):
+        service = ADUserService()
+        self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
+        self.mock_ad_connection.set_password.return_value = {'success': False, 'result': 'pw err'}
+
+        result = service.create_user(
+            'John Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jdoe'},
+            set_password='Sup3rSecure!',
+        )
+
+        self.assertEqual(
+            result,
+            {
+                'success': False,
+                'result': {'create': 'created', 'password': 'pw err'},
+                'dn': 'CN=John Doe,OU=Users,DC=example,DC=com',
+            },
+        )
+
+    def test_create_user_enable_failure(self):
+        service = ADUserService()
+        self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
+        self.mock_ad_connection.enable_user.return_value = {
+            'success': False,
+            'result': 'enable err',
+        }
+
+        result = service.create_user(
+            'John Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jdoe'},
+            enable_after_create=True,
+        )
+
+        self.assertEqual(
+            result,
+            {
+                'success': False,
+                'result': {'create': 'created', 'enable': 'enable err'},
+                'dn': 'CN=John Doe,OU=Users,DC=example,DC=com',
+            },
+        )
+
+    def test_create_user_unexpected_option(self):
+        service = ADUserService()
+
+        with self.assertRaises(ValueError):
+            service.create_user(
+                'John Doe',
+                'OU=Users,DC=example,DC=com',
+                {'sAMAccountName': 'jdoe'},
+                unexpected=True,
+            )
+
+    def test_create_user_add_entry_exception(self):
+        service = ADUserService()
+        self.mock_ad_connection.add_entry.side_effect = LDAPException('nope')
+
+        result = service.create_user(
+            'John Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jdoe'},
+        )
+
+        self.assertEqual(
+            result,
+            {'success': False, 'result': 'nope', 'dn': 'CN=John Doe,OU=Users,DC=example,DC=com'},
+        )
 
 
 

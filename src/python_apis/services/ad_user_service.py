@@ -292,6 +292,31 @@ class ADUserService:
     def _user_dn(self, cn: str, ou_dn: str) -> str:
         return f"CN={cn},{ou_dn}"
 
+    def set_password(self, user: ADUser, new_password: str, must_change_at_next_logon: bool = True
+                     ) -> dict[str, Any]:
+        """Set a new password for the specified user.
+        
+        Args:
+            user (ADUser): The user for whom to set the password.
+            new_password (str): The new password to set.
+            must_change_at_next_logon (bool): Whether the user must change the password at next
+                logon. Defaults to True.
+        """
+        try:
+            response = self.ad_connection.set_password(user.distinguishedName, new_password,
+                                                       must_change_at_next_logon)
+            if not response.get('success'):
+                self.logger.warning("Failed to set password for user %s: %s", user.sAMAccountName,
+                                    response.get('result'))
+                return {'success': False, 'result': response.get('result')}
+        except LDAPException as e:
+            self.logger.error("Exception occurred while setting password for user %s: %s",
+                              user.sAMAccountName, str(e))
+            return {'success': False, 'result': str(e)}
+
+        self.logger.info("Successfully set password for user %s", user.sAMAccountName)
+        return {'success': True, 'result': response.get('result')}
+
     def create_user(
         self,
         cn: str,
@@ -342,7 +367,10 @@ class ADUserService:
                 # You may choose to return failure or proceed; here we surface partial failure:
                 return {
                     'success': False,
-                    'result': {'create': response.get('result'), 'password': pw_resp.get('result')},
+                    'result': {
+                        'create': response.get('result'),
+                        'password': pw_resp.get('result')
+                    },
                     'dn': dn,
                 }
 

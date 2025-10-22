@@ -221,7 +221,7 @@ class ADUserService:
             )
             return result
 
-        new_dn = f"CN={user.sAMAccountName},{target_ou_dn}"
+        new_dn = f"CN={user.cn},{target_ou_dn}"
         setattr(user, 'distinguishedName', new_dn)
         setattr(user, 'ou', target_ou_dn)
         result['dn'] = new_dn
@@ -303,8 +303,7 @@ class ADUserService:
     def _user_dn(self, cn: str, ou_dn: str) -> str:
         return f"CN={cn},{ou_dn}"
 
-    def set_password(self, user: ADUser, new_password: str, must_change_at_next_logon: bool = True
-                     ) -> dict[str, Any]:
+    def set_password(self, user: ADUser, new_password: str) -> dict[str, Any]:
         """Set a new password for the specified user.
         
         Args:

@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock, mock_open
 from ldap3.core.exceptions import LDAPException
 from pydantic import ValidationError
@@ -92,10 +93,12 @@ class TestADUserService(unittest.TestCase):
 
     def test_move_user_to_ou_success(self):
         service = ADUserService()
-        user = MagicMock(spec=ADUser)
-        user.distinguishedName = 'CN=John Doe,OU=users,DC=example,DC=com'
-        user.ou = 'OU=users,DC=example,DC=com'
-        user.sAMAccountName = 'jdoe'
+        user = SimpleNamespace(
+            distinguishedName='CN=John Doe,OU=users,DC=example,DC=com',
+            ou='OU=users,DC=example,DC=com',
+            sAMAccountName='jdoe',
+            cn='John Doe',
+        )
         target_ou_dn = 'OU=new,DC=example,DC=com'
 
         self.mock_ad_connection.move_entry.return_value = {'success': True, 'result': 'success'}
@@ -106,16 +109,18 @@ class TestADUserService(unittest.TestCase):
             'CN=John Doe,OU=users,DC=example,DC=com',
             target_ou_dn,
         )
-        self.assertEqual(user.distinguishedName, 'CN=jdoe,OU=new,DC=example,DC=com')
+        self.assertEqual(user.distinguishedName, 'CN=John Doe,OU=new,DC=example,DC=com')
         self.assertEqual(user.ou, target_ou_dn)
-        self.assertEqual(result['dn'], 'CN=jdoe,OU=new,DC=example,DC=com')
+        self.assertEqual(result['dn'], 'CN=John Doe,OU=new,DC=example,DC=com')
 
     def test_move_user_to_ou_failure(self):
         service = ADUserService()
-        user = MagicMock(spec=ADUser)
-        user.distinguishedName = 'CN=John Doe,OU=users,DC=example,DC=com'
-        user.ou = 'OU=users,DC=example,DC=com'
-        user.sAMAccountName = 'jdoe'
+        user = SimpleNamespace(
+            distinguishedName='CN=John Doe,OU=users,DC=example,DC=com',
+            ou='OU=users,DC=example,DC=com',
+            sAMAccountName='jdoe',
+            cn='John Doe',
+        )
         target_ou_dn = 'OU=new,DC=example,DC=com'
 
         self.mock_ad_connection.move_entry.return_value = {'success': False, 'result': 'error'}
@@ -161,12 +166,13 @@ class TestADUserService(unittest.TestCase):
         user.sAMAccountName = 'jdoe'
         self.mock_ad_connection.set_password.return_value = {'success': True, 'result': 'ok'}
 
-        result = service.set_password(user, 'Sup3rSecure!', must_change_at_next_logon=False)
+        result = service.set_password(user, 'Sup3rSecure!')
 
-        self.mock_ad_connection.set_password.assert_called_once_with(
-            'CN=John Doe,OU=users,DC=example,DC=com',
-            'Sup3rSecure!',
-            False,
+        self.mock_ad_connection.set_password.assert_called_once()
+        call_args = self.mock_ad_connection.set_password.call_args
+        self.assertEqual(
+            call_args.args[:2],
+            ('CN=John Doe,OU=users,DC=example,DC=com', 'Sup3rSecure!'),
         )
         self.assertEqual(result, {'success': True, 'result': 'ok'})
 

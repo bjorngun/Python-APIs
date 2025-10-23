@@ -221,7 +221,7 @@ class ADUserService:
             )
             return result
 
-        new_dn = f"CN={user.cn},{target_ou_dn}"
+        new_dn = self._user_dn(str(user.cn), target_ou_dn)
         setattr(user, 'distinguishedName', new_dn)
         setattr(user, 'ou', target_ou_dn)
         result['dn'] = new_dn

@@ -127,6 +127,7 @@ class ADUser(Base):
     whenChanged = Column(DATETIME2, nullable=True)
     whenCreated = Column(DATETIME2, nullable=True)
     ou = Column(String(256))
+    carLicense = Column(String(256))
 
     firstOrgUnitDescription = Column(String(256))
     firstOrgUnitTelephoneNumber = Column(String(256))

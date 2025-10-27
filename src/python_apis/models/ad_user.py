@@ -234,5 +234,5 @@ class ADUser(Base):
             'facsimileTelephoneNumber', 'postalAddress',
             'telephoneNumber', 'textEncodedORAddress', 'title', 'userAccountControl',
             'userPrincipalName', 'uSNChanged', 'uSNCreated', 'whenChanged',
-            'whenCreated'
+            'whenCreated', 'carLicense',
         ]

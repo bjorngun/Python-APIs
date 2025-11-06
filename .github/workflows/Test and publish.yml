@@ -29,6 +29,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
+      shell: bash
       run: |
         python -m pip install --upgrade pip
         # Install Kerberos dev libraries on Linux only

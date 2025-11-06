@@ -8,13 +8,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 <!-- insertion marker -->
 ## Unreleased
 
-<small>[Compare with latest](https://github.com/bjorngun/Python-APIs/compare/v0.4.8...HEAD)</small>
+<small>[Compare with latest](https://github.com/bjorngun/Python-APIs/compare/v0.4.9...HEAD)</small>
+
+### Fixed
+
+- fix(ci): Install libkrb5-dev for gssapi build in publish job ([03925af](https://github.com/bjorngun/Python-APIs/commit/03925afe137be1dfb2436282b197708165d6d753) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
+
+<!-- insertion marker -->
+## [v0.4.9](https://github.com/bjorngun/Python-APIs/releases/tag/v0.4.9) - 2025-10-27
+
+<small>[Compare with v0.4.8](https://github.com/bjorngun/Python-APIs/compare/v0.4.8...v0.4.9)</small>
 
 ### Added
 
 - Added carLicence to user in fetch ([b32ba9b](https://github.com/bjorngun/Python-APIs/commit/b32ba9b4104cf62a870370f5c65058ac48bce128) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
 
-<!-- insertion marker -->
 ## [v0.4.8](https://github.com/bjorngun/Python-APIs/releases/tag/v0.4.8) - 2025-10-27
 
 <small>[Compare with v0.4.7](https://github.com/bjorngun/Python-APIs/compare/v0.4.7...v0.4.8)</small>
@@ -97,16 +105,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [v0.3.5](https://github.com/bjorngun/Python-APIs/releases/tag/v0.3.5) - 2025-06-04
 
-<small>[Compare with v0.2.1](https://github.com/bjorngun/Python-APIs/compare/v0.2.1...v0.3.5)</small>
-
-### Changed
-
-- Changed the regex that find the version from the pyproject.toml file ([d640ccc](https://github.com/bjorngun/Python-APIs/commit/d640cccbc498cbcdd92c609ada8d6219f772c679) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
-- Changed from ruby to Node.js for changelogs ([4a05742](https://github.com/bjorngun/Python-APIs/commit/4a057425ab9d7144dac0df52a7820c3958dacbd5) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
-
-## [v0.2.1](https://github.com/bjorngun/Python-APIs/releases/tag/v0.2.1) - 2025-06-04
-
-<small>[Compare with v0.1.0](https://github.com/bjorngun/Python-APIs/compare/v0.1.0...v0.2.1)</small>
+<small>[Compare with v0.1.0](https://github.com/bjorngun/Python-APIs/compare/v0.1.0...v0.3.5)</small>
 
 ### Added
 
@@ -131,6 +130,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 
+- Changed the regex that find the version from the pyproject.toml file ([d640ccc](https://github.com/bjorngun/Python-APIs/commit/d640cccbc498cbcdd92c609ada8d6219f772c679) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
+- Changed from ruby to Node.js for changelogs ([4a05742](https://github.com/bjorngun/Python-APIs/commit/4a057425ab9d7144dac0df52a7820c3958dacbd5) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
 - Changed where Ruby changlelog generator is stored ([4aaa662](https://github.com/bjorngun/Python-APIs/commit/4aaa662ad9ce49a62c72c797c4bb45025f903008) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
 - Changed the logic behind the OS dependant dependancy install ([994598b](https://github.com/bjorngun/Python-APIs/commit/994598b0fce59127fb1d9d7724caf14612303a4d) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
 - Changed dependencies to be more user friendly ([b9559f1](https://github.com/bjorngun/Python-APIs/commit/b9559f18da62c9aa6be2b5fbdd03e070c869f6d1) by Björn Gunnarsson - hugbúnaðarþróunarstjóri).
@@ -148,3 +149,4 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 - Added needed config files ([305bdf2](https://github.com/bjorngun/Python-APIs/commit/305bdf2f9a035aa2631a3a9f58dba98ee62c6e9f) by Björn Gunnarsson).
 - Added and changed the config files ([160bead](https://github.com/bjorngun/Python-APIs/commit/160bead583f40d71e064ddd91cf6090ff49136ad) by bjorngun).
+

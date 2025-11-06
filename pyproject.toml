@@ -47,7 +47,8 @@ lint = [
 ]
 publish = [
     "twine",
-    "build"
+    "build",
+    "git-changelog"
 ]
 
 [project.urls]

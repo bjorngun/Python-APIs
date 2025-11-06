@@ -22,7 +22,7 @@ class TestADConnection(unittest.TestCase):
     def test_init_success(self):
         conn = ADConnection(self.servers, self.search_base)
         self.assertEqual(conn.search_base, self.search_base)
-        self.assertIsNotNone(conn.ad_connection)
+        self.assertIsNotNone(conn.connection)
 
     def test_init_no_servers_raises_exception(self):
         with self.assertRaises(ADMissingServersError):
@@ -127,6 +127,23 @@ class TestADConnection(unittest.TestCase):
             distinguished_name,
             'CN=John Doe',
             new_superior=new_ou_dn,
+        )
+        self.assertTrue(result['success'])
+        self.assertEqual(result['result'], {'description': 'success'})
+
+    def test_rename_dn(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        distinguished_name = 'CN=John Doe,OU=users,DC=example,DC=com'
+        new_relative_dn = 'CN=John Smith'
+
+        self.mock_connection.modify_dn.return_value = True
+        self.mock_connection.result = {'description': 'success'}
+
+        result = ad_conn.rename_dn(distinguished_name, new_relative_dn)
+
+        self.mock_connection.modify_dn.assert_called_once_with(
+            distinguished_name,
+            new_relative_dn,
         )
         self.assertTrue(result['success'])
         self.assertEqual(result['result'], {'description': 'success'})

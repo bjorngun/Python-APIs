@@ -5,6 +5,7 @@ organizational units.
 
 from logging import getLogger
 from os import getenv
+from typing import Optional
 
 from dateutil import parser
 
@@ -19,7 +20,9 @@ class JiraService:
     """
 
     def __init__(
-        self, jira_connection: JiraConnection = None, sql_connection: SQLConnection = None):
+        self,
+        jira_connection: JiraConnection | None = None,
+        sql_connection: SQLConnection | None = None):
         """Initialize the ADOrganizationalUnitService with an ADConnection and a db connection.
 
         Args:
@@ -30,9 +33,7 @@ class JiraService:
         """
         self.logger = getLogger(__name__)
 
-        if sql_connection is None:
-            sql_connection = self._get_sql_connection()
-        self.sql_connection = sql_connection
+        self._sql_connection: Optional[SQLConnection] = sql_connection
 
         if jira_connection is None:
             jira_connection = self._get_jira_connection()
@@ -45,10 +46,22 @@ class JiraService:
             SQLConnection: A new SQLConnection instance configured from environment variables.
         """
         return SQLConnection(
-            server=getenv('JIRA_DB_SERVER', getenv('DEFAULT_DB_SERVER')),
-            database=getenv('JIRA_DB_NAME', getenv('DEFAULT_DB_NAME')),
-            driver=getenv('JIRA_SQL_DRIVER', getenv('DEFAULT_SQL_DRIVER')),
+            server=getenv('JIRA_DB_SERVER', getenv('DEFAULT_DB_SERVER', '')),
+            database=getenv('JIRA_DB_NAME', getenv('DEFAULT_DB_NAME', '')),
+            driver=getenv('JIRA_SQL_DRIVER', getenv('DEFAULT_SQL_DRIVER', '')),
         )
+
+    @property
+    def sql_connection(self) -> SQLConnection:
+        """Lazily instantiate and return the SQL connection."""
+        if self._sql_connection is None:
+            self._sql_connection = self._get_sql_connection()
+        return self._sql_connection
+
+    @sql_connection.setter
+    def sql_connection(self, value: Optional[SQLConnection]) -> None:
+        """Allow overriding the SQL connection (primarily for testing)."""
+        self._sql_connection = value
 
     def create_table(self):
         """Create the ADOrganizationalUnit table in the database if it does not exist."""

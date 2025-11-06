@@ -153,16 +153,33 @@ class ADUserService:
                              in ad_users_dict if 'sAMAccountName' in user}
         return sam_account_names
 
-    def enable_user(self, user: ADUser) -> dict[str, Any]:
+    def enable_user(self, user: ADUser | str) -> dict[str, Any]:
         """Enable an Active Directory user.
 
         Args:
-            user (ADUser): The user to enable.
+            user (ADUser | str): The user (or distinguishedName) to enable.
 
         Returns:
             dict[str, Any]: The result of the enable operation.
         """
-        return self.ad_connection.enable_user(user.distinguishedName)
+        distinguished_name = (user.distinguishedName
+                              if isinstance(user, ADUser)
+                              else str(user))
+        return self.ad_connection.enable_user(distinguished_name)
+
+    def disable_user(self, user: ADUser | str) -> dict[str, Any]:
+        """Disable an Active Directory user.
+
+        Args:
+            user (ADUser | str): The user (or distinguishedName) to disable.
+
+        Returns:
+            dict[str, Any]: The result of the disable operation.
+        """
+        distinguished_name = (user.distinguishedName
+                              if isinstance(user, ADUser)
+                              else str(user))
+        return self.ad_connection.disable_user(distinguished_name)
 
     def add_member(self, user: ADUser, group_dn: str) -> dict[str, Any]:
         """Add a user to an Active Directory group.
@@ -303,27 +320,31 @@ class ADUserService:
     def _user_dn(self, cn: str, ou_dn: str) -> str:
         return f"CN={cn},{ou_dn}"
 
-    def set_password(self, user: ADUser, new_password: str) -> dict[str, Any]:
+    def set_password(self, user: ADUser | str, new_password: str) -> dict[str, Any]:
         """Set a new password for the specified user.
         
         Args:
-            user (ADUser): The user for whom to set the password.
+            user (ADUser | str): The user (or distinguishedName) for whom to set the password.
             new_password (str): The new password to set.
-            must_change_at_next_logon (bool): Whether the user must change the password at next
-                logon. Defaults to True.
         """
+        distinguished_name = (user.distinguishedName
+                              if isinstance(user, ADUser)
+                              else str(user))
+        account_label = (getattr(user, 'sAMAccountName', None)
+                         if isinstance(user, ADUser)
+                         else None) or distinguished_name
         try:
-            response = self.ad_connection.set_password(str(user.distinguishedName), new_password)
+            response = self.ad_connection.set_password(str(distinguished_name), new_password)
             if not response.get('success'):
-                self.logger.warning("Failed to set password for user %s: %s", user.sAMAccountName,
+                self.logger.warning("Failed to set password for user %s: %s", account_label,
                                     response.get('result'))
                 return {'success': False, 'result': response.get('result')}
         except LDAPException as e:
             self.logger.error("Exception occurred while setting password for user %s: %s",
-                              user.sAMAccountName, str(e))
+                              account_label, str(e))
             return {'success': False, 'result': str(e)}
 
-        self.logger.info("Successfully set password for user %s", user.sAMAccountName)
+        self.logger.info("Successfully set password for user %s", account_label)
         return {'success': True, 'result': response.get('result')}
 
     def create_user(
@@ -370,7 +391,7 @@ class ADUserService:
 
         # Optional: set password then enable
         if set_password:
-            pw_resp = self.ad_connection.set_password(dn, set_password)
+            pw_resp = self.set_password(dn, set_password)
             if not pw_resp.get('success'):
                 self.logger.warning("Set password failed for %s: %s", dn, pw_resp.get('result'))
                 # You may choose to return failure or proceed; here we surface partial failure:
@@ -384,7 +405,7 @@ class ADUserService:
                 }
 
         if enable_after_create:
-            en_resp = self.ad_connection.enable_user(dn)
+            en_resp = self.enable_user(dn)
             if not en_resp.get('success'):
                 self.logger.warning("Enable user failed for %s: %s", dn, en_resp.get('result'))
                 return {
@@ -395,3 +416,72 @@ class ADUserService:
 
         self.logger.info("Created AD user: %s", dn)
         return {'success': True, 'result': response.get('result'), 'dn': dn}
+
+    def rename_user_cn(self, user: ADUser, new_cn: str) -> dict[str, Any]:
+        """
+        Rename the user's CN (relative DN) without changing their OU placement.
+
+        Args:
+            user: The ADUser to rename.
+            new_cn: The new common name for the user.
+
+        Returns:
+            Dictionary containing the result of the rename operation.
+        """
+        current_dn = getattr(user, "distinguishedName", None)
+        if not current_dn:
+            return {"success": False, "result": "User distinguishedName unavailable"}
+
+        # Extract the current OU from the DN (everything after the first comma)
+        dn_parts = current_dn.split(',', 1)
+        if len(dn_parts) < 2:
+            return {"success": False, "result": "Invalid distinguishedName format"}
+
+        current_ou = dn_parts[1]
+        new_relative_dn = f"CN={new_cn}"
+        new_full_dn = f"{new_relative_dn},{current_ou}"
+
+        # Log the operation
+        old_cn = getattr(user, "cn", "<unknown>")
+        sam_account = getattr(user, "sAMAccountName", "<unknown>")
+        
+        try:
+            response = self.ad_connection.rename_dn(current_dn, new_relative_dn)
+        except LDAPException as e:
+            self.logger.error(
+                "Exception occurred while renaming user %s (CN: %s -> %s): %s",
+                sam_account,
+                old_cn,
+                new_cn,
+                str(e),
+            )
+            return {'success': False, 'result': str(e)}
+
+        result = dict(response) if response is not None else {'success': False, 'result': None}
+        
+        if not result.get('success'):
+            self.logger.warning(
+                "Failed to rename AD user %s (CN: %s -> %s): %s",
+                sam_account,
+                old_cn,
+                new_cn,
+                result.get('result'),
+            )
+            return result
+
+        # Update the user object with the new DN and CN
+        setattr(user, 'distinguishedName', new_full_dn)
+        setattr(user, 'cn', new_cn)
+        result['old_dn'] = current_dn
+        result['new_dn'] = new_full_dn
+        result['old_cn'] = old_cn
+        result['new_cn'] = new_cn
+        
+        self.logger.info(
+            "Successfully renamed user %s from CN=%s to CN=%s",
+            sam_account,
+            old_cn,
+            new_cn,
+        )
+        
+        return result

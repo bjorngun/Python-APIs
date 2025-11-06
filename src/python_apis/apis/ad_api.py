@@ -34,10 +34,10 @@ class ADConnection:
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
 
-        self.ad_connection = self._get_ad_connection(servers)
+        self.connection = self._get_connection(servers)
         self.search_base = search_base
 
-    def _get_ad_connection(self, servers: list) -> Connection | None:
+    def _get_connection(self, servers: list) -> Connection:
         """initializes a connection to the active directory.
         """
         if not servers:
@@ -63,7 +63,7 @@ class ADConnection:
     def _get_paged_search(self, search_filter: str, attributes: list[str]):
         """Returns a entry_generator.
         """
-        entry_generator = self.ad_connection.extend.standard.paged_search(
+        entry_generator = self.connection.extend.standard.paged_search(
             search_base=self.search_base,
             search_filter=search_filter,
             search_scope=SUBTREE,
@@ -72,6 +72,18 @@ class ADConnection:
             generator=True,
         )
         return entry_generator
+
+    def _set_ou_for_object(self, ad_object: dict[str, Any]) -> None:
+        """Add the OU extracted from ``distinguishedName`` to ``ad_object`` in place."""
+
+        if 'distinguishedName' not in ad_object or 'ou' in ad_object:
+            return
+
+        distinguished_name = ad_object['distinguishedName']
+        if ',' not in distinguished_name:
+            return
+
+        ad_object['ou'] = ','.join(distinguished_name.split(',')[1:])
 
     def search(
         self, search_filter: str, attributes: list[str] | None = None
@@ -92,10 +104,10 @@ class ADConnection:
         entry_generator = self._get_paged_search(search_filter, attributes)
         result_list = [x['attributes'] for x in entry_generator if 'attributes' in x]
         for ad_object in result_list:
-            self.set_ou_for_object(ad_object)
+            self._set_ou_for_object(ad_object)
         return result_list
 
-    def get(self, search_filter: str, attributes: list[str] = None) -> dict[str, str]:
+    def get(self, search_filter: str, attributes: list[str] | None = None) -> dict[str, str]:
         """Returns a single result, the first result if more then one result
         is matched and an empty dict if zero results where returned.
 
@@ -125,8 +137,8 @@ class ADConnection:
         """
 
         changes = {key: [MODIFY_REPLACE, value] for key, value in changes}
-        success = self.ad_connection.modify(distinguished_name, changes)
-        return {'result': self.ad_connection.result, 'success': success}
+        success = self.connection.modify(distinguished_name, changes)
+        return {'result': self.connection.result, 'success': success}
 
     def add_value(self, distinguished_name: str, changes: dict[str, str]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of field and value where the value is added to
@@ -144,8 +156,8 @@ class ADConnection:
         """
 
         changes = {key: [MODIFY_ADD, value] for key, value in changes.items()}
-        success = self.ad_connection.modify(distinguished_name, changes)
-        return {'result': self.ad_connection.result, 'success': success}
+        success = self.connection.modify(distinguished_name, changes)
+        return {'result': self.connection.result, 'success': success}
 
     def remove_value(self, distinguished_name: str, changes: dict[str, str]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of field and value where the specified value is
@@ -164,8 +176,8 @@ class ADConnection:
         """
 
         changes = {key: [MODIFY_DELETE, value] for key, value in changes.items()}
-        success = self.ad_connection.modify(distinguished_name, changes)
-        return {'result': self.ad_connection.result, 'success': success}
+        success = self.connection.modify(distinguished_name, changes)
+        return {'result': self.connection.result, 'success': success}
 
     def add_member(self, user_dn: str, group_dn: str):
         """Takes in a user distinguishedName and a group distinguishedName adds the specified user
@@ -209,25 +221,29 @@ class ADConnection:
         """
 
         relative_dn = distinguished_name.split(',', 1)[0]
-        success = self.ad_connection.modify_dn(
+        success = self.connection.modify_dn(
             distinguished_name,
             relative_dn,
             new_superior=new_ou_dn,
         )
-        return {'result': self.ad_connection.result, 'success': success}
+        return {'result': self.connection.result, 'success': success}
 
-    def set_ou_for_object(self, ad_object: dict[str, Any]) -> None:
-        """Add the OU extracted from ``distinguishedName`` to ``ad_object``.
+    def rename_dn(self, distinguished_name: str, new_relative_dn: str) -> dict[str, Any]:
+        """Rename an AD object's relative DN (CN) while keeping it in the same OU.
 
-        This helper modifies ``ad_object`` in place if the object does not
-        already contain the ``ou`` key.
+        Args:
+            distinguished_name (str): Current distinguished name for the AD object.
+            new_relative_dn (str): New relative DN (e.g., 'CN=NewName').
+
+        Returns:
+            dict[str, Any]: Result payload containing the LDAP response and success flag.
         """
+        success = self.connection.modify_dn(
+            distinguished_name,
+            new_relative_dn,
+        )
+        return {'result': self.connection.result, 'success': success}
 
-        if 'distinguishedName' in ad_object and 'ou' not in ad_object:
-            if ',' not in ad_object['distinguishedName']:
-                return
-            ou = ','.join(ad_object['distinguishedName'].split(',')[1:])
-            ad_object['ou'] = ou
 
     # ---------------------------------------------------------------------
     # Create new user
@@ -238,21 +254,29 @@ class ADConnection:
         e.g., ['top', 'person', 'organizationalPerson', 'user'].
         """
 
-        success = self.ad_connection.add(distinguished_name, attributes=attributes)
-        return {'result': self.ad_connection.result, 'success': success}
+        success = self.connection.add(distinguished_name, attributes=attributes)
+        return {'result': self.connection.result, 'success': success}
 
     def set_password(self, distinguished_name: str, new_password: str) -> dict[str, Any]:
         """Set the user's password. Requires LDAPS/StartTLS and appropriate rights.
         """
 
-        password_ext = self.ad_connection.extend.microsoft
+        password_ext = self.connection.extend.microsoft
         success = password_ext.modify_password(distinguished_name, new_password)
-        return {'result': self.ad_connection.result, 'success': success}
+        return {'result': self.connection.result, 'success': success}
 
     def enable_user(self, distinguished_name: str) -> dict[str, Any]:
         """Enable an AD user by setting userAccountControl to 512 (NORMAL_ACCOUNT).
         """
 
         changes = {'userAccountControl': [MODIFY_REPLACE, 512]}
-        success = self.ad_connection.modify(distinguished_name, changes)
-        return {'result': self.ad_connection.result, 'success': success}
+        success = self.connection.modify(distinguished_name, changes)
+        return {'result': self.connection.result, 'success': success}
+
+    def disable_user(self, distinguished_name: str) -> dict[str, Any]:
+        """Disable an AD user by setting userAccountControl to 514 (ACCOUNTDISABLE).
+        """
+
+        changes = {'userAccountControl': [MODIFY_REPLACE, 514]}
+        success = self.connection.modify(distinguished_name, changes)
+        return {'result': self.connection.result, 'success': success}

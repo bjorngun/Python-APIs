@@ -306,6 +306,124 @@ class TestADUserService(unittest.TestCase):
             {'success': False, 'result': 'nope', 'dn': 'CN=John Doe,OU=Users,DC=example,DC=com'},
         )
 
+    def test_rename_user_cn_success(self):
+        service = ADUserService()
+        
+        # Mock user object
+        user = MagicMock()
+        user.distinguishedName = "CN=John Doe,OU=Users,OU=Company,DC=domain,DC=com"
+        user.cn = "John Doe"
+        user.sAMAccountName = "jdoe"
+        
+        # Mock successful rename response
+        self.mock_ad_connection.rename_dn.return_value = {
+            'success': True,
+            'result': 'Operation completed successfully'
+        }
+        
+        result = service.rename_user_cn(user, "John Smith")
+        
+        # Verify the rename_dn was called with correct parameters
+        self.mock_ad_connection.rename_dn.assert_called_once_with(
+            "CN=John Doe,OU=Users,OU=Company,DC=domain,DC=com",
+            "CN=John Smith"
+        )
+        
+        # Verify the result
+        expected_result = {
+            'success': True,
+            'result': 'Operation completed successfully',
+            'old_dn': "CN=John Doe,OU=Users,OU=Company,DC=domain,DC=com",
+            'new_dn': "CN=John Smith,OU=Users,OU=Company,DC=domain,DC=com",
+            'old_cn': "John Doe",
+            'new_cn': "John Smith"
+        }
+        self.assertEqual(result, expected_result)
+
+    def test_rename_user_cn_failure(self):
+        service = ADUserService()
+        
+        # Mock user object
+        user = MagicMock()
+        user.distinguishedName = "CN=John Doe,OU=Users,OU=Company,DC=domain,DC=com"
+        user.cn = "John Doe"
+        user.sAMAccountName = "jdoe"
+        
+        # Mock failed rename response
+        self.mock_ad_connection.rename_dn.return_value = {
+            'success': False,
+            'result': 'Access denied'
+        }
+        
+        result = service.rename_user_cn(user, "John Smith")
+        
+        # Verify the result
+        expected_result = {
+            'success': False,
+            'result': 'Access denied'
+        }
+        self.assertEqual(result, expected_result)
+
+    def test_rename_user_cn_no_dn(self):
+        service = ADUserService()
+        
+        # Mock user object without distinguishedName
+        user = MagicMock()
+        user.distinguishedName = None
+        user.sAMAccountName = "jdoe"
+        
+        result = service.rename_user_cn(user, "John Smith")
+        
+        # Verify the result
+        expected_result = {
+            'success': False,
+            'result': 'User distinguishedName unavailable'
+        }
+        self.assertEqual(result, expected_result)
+        
+        # Verify rename_dn was not called
+        self.mock_ad_connection.rename_dn.assert_not_called()
+
+    def test_rename_user_cn_invalid_dn(self):
+        service = ADUserService()
+        
+        # Mock user object with invalid DN format
+        user = MagicMock()
+        user.distinguishedName = "CN=John Doe"  # No comma, invalid format
+        user.sAMAccountName = "jdoe"
+        
+        result = service.rename_user_cn(user, "John Smith")
+        
+        # Verify the result
+        expected_result = {
+            'success': False,
+            'result': 'Invalid distinguishedName format'
+        }
+        self.assertEqual(result, expected_result)
+        
+        # Verify rename_dn was not called
+        self.mock_ad_connection.rename_dn.assert_not_called()
+
+    def test_rename_user_cn_ldap_exception(self):
+        service = ADUserService()
+        
+        # Mock user object
+        user = MagicMock()
+        user.distinguishedName = "CN=John Doe,OU=Users,OU=Company,DC=domain,DC=com"
+        user.cn = "John Doe"
+        user.sAMAccountName = "jdoe"
+        
+        # Mock LDAP exception
+        self.mock_ad_connection.rename_dn.side_effect = LDAPException('LDAP server error')
+        
+        result = service.rename_user_cn(user, "John Smith")
+        
+        # Verify the result
+        expected_result = {
+            'success': False,
+            'result': 'LDAP server error'
+        }
+        self.assertEqual(result, expected_result)
 
 
 if __name__ == '__main__':

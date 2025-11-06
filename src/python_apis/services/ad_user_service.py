@@ -444,7 +444,7 @@ class ADUserService:
         # Log the operation
         old_cn = getattr(user, "cn", "<unknown>")
         sam_account = getattr(user, "sAMAccountName", "<unknown>")
-        
+
         try:
             response = self.ad_connection.rename_dn(current_dn, new_relative_dn)
         except LDAPException as e:
@@ -458,7 +458,7 @@ class ADUserService:
             return {'success': False, 'result': str(e)}
 
         result = dict(response) if response is not None else {'success': False, 'result': None}
-        
+
         if not result.get('success'):
             self.logger.warning(
                 "Failed to rename AD user %s (CN: %s -> %s): %s",
@@ -476,12 +476,12 @@ class ADUserService:
         result['new_dn'] = new_full_dn
         result['old_cn'] = old_cn
         result['new_cn'] = new_cn
-        
+
         self.logger.info(
             "Successfully renamed user %s from CN=%s to CN=%s",
             sam_account,
             old_cn,
             new_cn,
         )
-        
+
         return result

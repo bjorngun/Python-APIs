@@ -148,4 +148,3 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 - Added needed config files ([305bdf2](https://github.com/bjorngun/Python-APIs/commit/305bdf2f9a035aa2631a3a9f58dba98ee62c6e9f) by Björn Gunnarsson).
 - Added and changed the config files ([160bead](https://github.com/bjorngun/Python-APIs/commit/160bead583f40d71e064ddd91cf6090ff49136ad) by bjorngun).
-

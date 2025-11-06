@@ -425,6 +425,212 @@ class TestADUserService(unittest.TestCase):
         }
         self.assertEqual(result, expected_result)
 
+    def test_get_users_from_db(self):
+        service = ADUserService()
+        
+        # Mock database users
+        mock_users = [MagicMock(), MagicMock()]
+        self.mock_sql_connection.session.query.return_value.all.return_value = mock_users
+        
+        result = service.get_users_from_db()
+        
+        # Verify query was called correctly
+        self.mock_sql_connection.session.query.assert_called_once_with(ADUser)
+        self.mock_sql_connection.session.query.return_value.all.assert_called_once()
+        
+        # Verify result
+        self.assertEqual(result, mock_users)
+
+    def test_update_user_db_success(self):
+        service = ADUserService()
+        
+        # Mock AD users
+        mock_ad_users = [MagicMock(), MagicMock()]
+        with patch.object(service, 'get_users_from_ad', return_value=mock_ad_users):
+            service.update_user_db()
+        
+        # Verify the database operations
+        self.mock_sql_connection.session.query.assert_called_with(ADUser)
+        self.mock_sql_connection.session.query.return_value.delete.assert_called_once()
+        self.mock_sql_connection.session.add_all.assert_called_once_with(mock_ad_users)
+        self.mock_sql_connection.session.commit.assert_called_once()
+
+    def test_update_user_db_exception(self):
+        service = ADUserService()
+        
+        # Mock AD users
+        mock_ad_users = [MagicMock(), MagicMock()]
+        
+        # Mock database exception
+        self.mock_sql_connection.session.commit.side_effect = Exception('Database error')
+        
+        with patch.object(service, 'get_users_from_ad', return_value=mock_ad_users):
+            with self.assertRaises(Exception):
+                service.update_user_db()
+        
+        # Verify rollback was called
+        self.mock_sql_connection.session.rollback.assert_called_once()
+
+    def test_enable_user_with_aduser(self):
+        service = ADUserService()
+        
+        # Create a proper mock ADUser object
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = "CN=John Doe,OU=Users,DC=example,DC=com"
+        
+        # Mock successful enable response
+        self.mock_ad_connection.enable_user.return_value = {
+            'success': True,
+            'result': 'User enabled successfully'
+        }
+        
+        result = service.enable_user(user)
+        
+        # Verify enable_user was called with correct DN
+        self.mock_ad_connection.enable_user.assert_called_once_with(
+            "CN=John Doe,OU=Users,DC=example,DC=com"
+        )
+        
+        # Verify result
+        expected_result = {
+            'success': True,
+            'result': 'User enabled successfully'
+        }
+        self.assertEqual(result, expected_result)
+
+    def test_enable_user_with_string(self):
+        service = ADUserService()
+        
+        distinguished_name = "CN=John Doe,OU=Users,DC=example,DC=com"
+        
+        # Mock successful enable response
+        self.mock_ad_connection.enable_user.return_value = {
+            'success': True,
+            'result': 'User enabled successfully'
+        }
+        
+        result = service.enable_user(distinguished_name)
+        
+        # Verify enable_user was called with correct DN
+        self.mock_ad_connection.enable_user.assert_called_once_with(distinguished_name)
+        
+        # Verify result
+        expected_result = {
+            'success': True,
+            'result': 'User enabled successfully'
+        }
+        self.assertEqual(result, expected_result)
+
+    def test_disable_user_with_aduser(self):
+        service = ADUserService()
+        
+        # Create a proper mock ADUser object
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = "CN=John Doe,OU=Users,DC=example,DC=com"
+        
+        # Mock successful disable response
+        self.mock_ad_connection.disable_user.return_value = {
+            'success': True,
+            'result': 'User disabled successfully'
+        }
+        
+        result = service.disable_user(user)
+        
+        # Verify disable_user was called with correct DN
+        self.mock_ad_connection.disable_user.assert_called_once_with(
+            "CN=John Doe,OU=Users,DC=example,DC=com"
+        )
+        
+        # Verify result
+        expected_result = {
+            'success': True,
+            'result': 'User disabled successfully'
+        }
+        self.assertEqual(result, expected_result)
+
+    def test_disable_user_with_string(self):
+        service = ADUserService()
+        
+        distinguished_name = "CN=John Doe,OU=Users,DC=example,DC=com"
+        
+        # Mock successful disable response
+        self.mock_ad_connection.disable_user.return_value = {
+            'success': True,
+            'result': 'User disabled successfully'
+        }
+        
+        result = service.disable_user(distinguished_name)
+        
+        # Verify disable_user was called with correct DN
+        self.mock_ad_connection.disable_user.assert_called_once_with(distinguished_name)
+        
+        # Verify result
+        expected_result = {
+            'success': True,
+            'result': 'User disabled successfully'
+        }
+        self.assertEqual(result, expected_result)
+
+    def test_get_all_sam_account_names(self):
+        service = ADUserService()
+        
+        # Mock AD search results
+        mock_users = [
+            {'sAMAccountName': 'john.doe'},
+            {'sAMAccountName': 'jane.smith'},
+            {'sAMAccountName': 'bob.wilson'},
+            {'otherAttribute': 'no_sam'}  # User without sAMAccountName
+        ]
+        
+        self.mock_ad_connection.search.return_value = mock_users
+        
+        result = service.get_all_sam_account_names()
+        
+        # Verify search was called with correct parameters
+        self.mock_ad_connection.search.assert_called_once_with(
+            '(objectClass=user)', 
+            ['sAMAccountName']
+        )
+        
+        # Verify result (should only include users with sAMAccountName)
+        expected_result = {'john.doe', 'jane.smith', 'bob.wilson'}
+        self.assertEqual(result, expected_result)
+
+    def test_get_all_sam_account_names_with_custom_filter(self):
+        service = ADUserService()
+        
+        # Mock AD search results
+        mock_users = [
+            {'sAMAccountName': 'admin.user'},
+            {'sAMAccountName': 'service.account'}
+        ]
+        
+        self.mock_ad_connection.search.return_value = mock_users
+        
+        custom_filter = '(&(objectClass=user)(memberOf=CN=Admins,OU=Groups,DC=example,DC=com))'
+        result = service.get_all_sam_account_names(custom_filter)
+        
+        # Verify search was called with custom filter
+        self.mock_ad_connection.search.assert_called_once_with(
+            custom_filter, 
+            ['sAMAccountName']
+        )
+        
+        # Verify result
+        expected_result = {'admin.user', 'service.account'}
+        self.assertEqual(result, expected_result)
+
+    def test_attributes_static_method(self):
+        # Test the static method that returns ADUser attributes
+        with patch.object(ADUser, 'get_attribute_list', return_value=['attr1', 'attr2', 'attr3']) as mock_get_attrs:
+            result = ADUserService.attributes()
+            
+            # Verify get_attribute_list was called
+            mock_get_attrs.assert_called_once()
+            
+            # Verify result
+            self.assertEqual(result, ['attr1', 'attr2', 'attr3'])
+
 
 if __name__ == '__main__':
     unittest.main()

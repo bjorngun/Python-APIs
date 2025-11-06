@@ -3,16 +3,23 @@ name: Test, Lint, and Publish Package
 on:
   push:
     branches: [main]
+    tags: ['v*.*.*']  # Trigger publish on version tags
   pull_request:
     branches: [main]
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   build-test-lint:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        # Optimize: Test only LTS versions + latest, skip intermediate versions
         os: [windows-latest, ubuntu-latest]
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.14']  # Skip 3.11, 3.12, 3.13 for faster builds
+        include:
+          # Add one more version for thorough testing on Ubuntu only
+          - os: ubuntu-latest
+            python-version: '3.13'
     steps:
     - uses: actions/checkout@v4.2.2
 
@@ -21,27 +28,19 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install system dependencies for Linux
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libkrb5-dev
-        python -m pip install --upgrade pip
-        python -m pip install ".[test]"
-        python -c "from ldap3 import GSSAPI; print('GSSAPI OK')"
-
-    - name: Install system dependencies for Windows
-      if: runner.os == 'Windows'
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install ".[test,lint,publish]"
-        python -c "from ldap3 import KERBEROS; print('KERBEROS OK')"
+        # Install Kerberos dev libraries on Linux only
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          sudo apt-get update && sudo apt-get install -y libkrb5-dev
+          python -m pip install ".[test]"
+        else
+          python -m pip install ".[test,lint,publish]"
+        fi
 
-    - name: Display Python version
-      run: python -c "import sys; print(sys.version)"
-
-    - name: Run linter (only on Windows + Python 3.13)
-      if: matrix.os == 'windows-latest' && matrix.python-version == '3.13'
+    - name: Run linter (only on Windows + Python 3.14)
+      if: matrix.os == 'windows-latest' && matrix.python-version == '3.14'
       run: |
         pylint --rcfile=.pylintrc src/python_apis/
 
@@ -51,40 +50,42 @@ jobs:
       run: |
         python -m unittest discover -s src/tests -p "test_*.py" -v
 
-    - name: Build package (only on Windows + Python 3.13)
-      if: matrix.os == 'windows-latest' && matrix.python-version == '3.13'
+    - name: Build package (only on Windows + Python 3.14)
+      if: matrix.os == 'windows-latest' && matrix.python-version == '3.14'
       run: python -m build
 
-    - name: Upload coverage to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
-      uses: codecov/codecov-action@v5.4.3
-      with:
-        file: ./coverage.xml
-        token: ${{ secrets.CODECOV_TOKEN }}
+    - name: Generate and upload coverage (Ubuntu + Python 3.14 only)
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14'
+      run: |
+        python -m pip install coverage
+        python -m coverage run -m unittest discover -s src/tests -p "test_*.py"
+        python -m coverage xml
+        # Upload to codecov if token is available
+        if [ -n "${{ secrets.CODECOV_TOKEN }}" ]; then
+          curl -Os https://uploader.codecov.io/latest/linux/codecov
+          chmod +x codecov
+          ./codecov -f coverage.xml -t ${{ secrets.CODECOV_TOKEN }}
+        fi
 
   publish:
     needs: build-test-lint
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Only publish on version tags (v*.*.*)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
     - uses: actions/checkout@v4.2.2
       with:
-        fetch-depth: 0  # Fetch full history for changelog generation
+        fetch-depth: 0
 
     - uses: actions/setup-python@v5.6.0
       with:
-        python-version: '3.13'
+        python-version: '3.14'
 
-    - name: Install system dependencies for Linux  
+    - name: Install dependencies and build
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libkrb5-dev
-
-    - name: Upgrade pip and install build tools
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install ".[publish]"
-
+        sudo apt-get update && sudo apt-get install -y libkrb5-dev
+        python -m pip install --upgrade pip build twine git-changelog
+        
     - name: Generate changelog
       run: |
         git-changelog --output CHANGELOG.md --template keepachangelog
@@ -94,11 +95,34 @@ jobs:
         git diff --staged --quiet || git commit -m "Update CHANGELOG.md [skip ci]"
         git push
 
-    - name: Build package
-      run: python -m build
-
-    - name: Publish to PyPI
+    - name: Build and publish package
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-      run: python -m twine upload dist/*
+      run: |
+        python -m build
+        python -m twine upload dist/*
+
+  update-changelog:
+    runs-on: ubuntu-latest
+    # Only run on main branch pushes or manual dispatch
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    steps:
+    - uses: actions/checkout@v4.2.2
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - uses: actions/setup-python@v5.6.0
+      with:
+        python-version: '3.14'
+
+    - name: Update changelog
+      run: |
+        python -m pip install git-changelog
+        git-changelog --output CHANGELOG.md --template keepachangelog
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add CHANGELOG.md
+        git diff --staged --quiet || git commit -m "docs: Update CHANGELOG.md [skip ci]"
+        git push

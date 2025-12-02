@@ -92,6 +92,7 @@ class ADUserSchema(BaseModel):
     whenChanged: Optional[datetime] = None
     whenCreated: Optional[datetime] = None
     ou: Optional[str] = None
+    carLicense: Optional[str] = None
     enabled: Optional[bool] = None
     firstOrgUnitDescription: Optional[str] = None
     firstOrgUnitTelephoneNumber: Optional[str] = None
@@ -187,7 +188,7 @@ class ADUserSchema(BaseModel):
             value = int(value)
         return value
 
-    @field_validator('employeeNumber', 'departmentNumber', 'extensionAttribute7', mode='before')
+    @field_validator('employeeNumber', 'departmentNumber', 'extensionAttribute7', 'carLicense', mode='before')
     def validate_single_value_fields(cls, value, _info: ValidationInfo):
         """
         Validator for fields that should contain a single value.

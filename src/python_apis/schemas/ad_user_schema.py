@@ -188,7 +188,9 @@ class ADUserSchema(BaseModel):
             value = int(value)
         return value
 
-    @field_validator('employeeNumber', 'departmentNumber', 'extensionAttribute7', 'carLicense', mode='before')
+    @field_validator(
+        'employeeNumber', 'departmentNumber', 'extensionAttribute7', 'carLicense', mode='before'
+    )
     def validate_single_value_fields(cls, value, _info: ValidationInfo):
         """
         Validator for fields that should contain a single value.

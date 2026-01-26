@@ -198,6 +198,54 @@ class TestADUserService(unittest.TestCase):
 
         self.assertEqual(result, {'success': False, 'result': 'boom'})
 
+    def test_set_password_with_must_change_at_next_logon_success(self):
+        service = ADUserService()
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = 'CN=John Doe,OU=users,DC=example,DC=com'
+        user.sAMAccountName = 'jdoe'
+        self.mock_ad_connection.set_password.return_value = {'success': True, 'result': 'ok'}
+        self.mock_ad_connection.force_change_password_at_next_logon.return_value = {
+            'success': True, 'result': 'forced'
+        }
+
+        result = service.set_password(user, 'Sup3rSecure!', must_change_at_next_logon=True)
+
+        self.mock_ad_connection.set_password.assert_called_once()
+        self.mock_ad_connection.force_change_password_at_next_logon.assert_called_once_with(
+            'CN=John Doe,OU=users,DC=example,DC=com', force=True
+        )
+        self.assertEqual(result, {'success': True, 'result': 'ok'})
+
+    def test_set_password_with_must_change_at_next_logon_force_fails(self):
+        service = ADUserService()
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = 'CN=John Doe,OU=users,DC=example,DC=com'
+        user.sAMAccountName = 'jdoe'
+        self.mock_ad_connection.set_password.return_value = {'success': True, 'result': 'ok'}
+        self.mock_ad_connection.force_change_password_at_next_logon.return_value = {
+            'success': False, 'result': 'force error'
+        }
+
+        result = service.set_password(user, 'Sup3rSecure!', must_change_at_next_logon=True)
+
+        self.assertEqual(result, {
+            'success': False,
+            'result': {'password': 'ok', 'must_change': 'force error'},
+        })
+
+    def test_set_password_without_must_change_does_not_call_force(self):
+        service = ADUserService()
+        user = MagicMock(spec=ADUser)
+        user.distinguishedName = 'CN=John Doe,OU=users,DC=example,DC=com'
+        user.sAMAccountName = 'jdoe'
+        self.mock_ad_connection.set_password.return_value = {'success': True, 'result': 'ok'}
+
+        result = service.set_password(user, 'Sup3rSecure!', must_change_at_next_logon=False)
+
+        self.mock_ad_connection.set_password.assert_called_once()
+        self.mock_ad_connection.force_change_password_at_next_logon.assert_not_called()
+        self.assertEqual(result, {'success': True, 'result': 'ok'})
+
     def test_create_user_success_with_defaults(self):
         service = ADUserService()
         self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
@@ -290,6 +338,56 @@ class TestADUserService(unittest.TestCase):
                 {'sAMAccountName': 'jdoe'},
                 unexpected=True,
             )
+
+    def test_create_user_with_must_change_password_success(self):
+        service = ADUserService()
+        self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
+        self.mock_ad_connection.set_password.return_value = {'success': True, 'result': 'pw ok'}
+        self.mock_ad_connection.force_change_password_at_next_logon.return_value = {
+            'success': True, 'result': 'forced'
+        }
+
+        result = service.create_user(
+            'John Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jdoe'},
+            set_password='Sup3rSecure!',
+            must_change_password_at_next_logon=True,
+        )
+
+        self.mock_ad_connection.force_change_password_at_next_logon.assert_called_once()
+        self.assertEqual(
+            result,
+            {'success': True, 'result': 'created', 'dn': 'CN=John Doe,OU=Users,DC=example,DC=com'},
+        )
+
+    def test_create_user_with_must_change_password_force_fails(self):
+        service = ADUserService()
+        self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
+        self.mock_ad_connection.set_password.return_value = {'success': True, 'result': 'pw ok'}
+        self.mock_ad_connection.force_change_password_at_next_logon.return_value = {
+            'success': False, 'result': 'force err'
+        }
+
+        result = service.create_user(
+            'John Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jdoe'},
+            set_password='Sup3rSecure!',
+            must_change_password_at_next_logon=True,
+        )
+
+        self.assertEqual(
+            result,
+            {
+                'success': False,
+                'result': {
+                    'create': 'created',
+                    'password': {'password': 'pw ok', 'must_change': 'force err'},
+                },
+                'dn': 'CN=John Doe,OU=Users,DC=example,DC=com',
+            },
+        )
 
     def test_create_user_add_entry_exception(self):
         service = ADUserService()

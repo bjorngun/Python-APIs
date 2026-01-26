@@ -320,12 +320,23 @@ class ADUserService:
     def _user_dn(self, cn: str, ou_dn: str) -> str:
         return f"CN={cn},{ou_dn}"
 
-    def set_password(self, user: ADUser | str, new_password: str) -> dict[str, Any]:
+    def set_password(
+        self,
+        user: ADUser | str,
+        new_password: str,
+        *,
+        must_change_at_next_logon: bool = False,
+    ) -> dict[str, Any]:
         """Set a new password for the specified user.
-        
+
         Args:
             user (ADUser | str): The user (or distinguishedName) for whom to set the password.
             new_password (str): The new password to set.
+            must_change_at_next_logon (bool): If True, forces the user to change
+                their password at the next logon. Defaults to False.
+
+        Returns:
+            dict[str, Any]: Result payload with 'success' and 'result' keys.
         """
         distinguished_name = (user.distinguishedName
                               if isinstance(user, ADUser)
@@ -339,6 +350,23 @@ class ADUserService:
                 self.logger.warning("Failed to set password for user %s: %s", account_label,
                                     response.get('result'))
                 return {'success': False, 'result': response.get('result')}
+
+            if must_change_at_next_logon:
+                force_resp = self.ad_connection.force_change_password_at_next_logon(
+                    str(distinguished_name), force=True
+                )
+                if not force_resp.get('success'):
+                    self.logger.warning(
+                        "Failed to set 'must change password' for user %s: %s",
+                        account_label, force_resp.get('result')
+                    )
+                    return {
+                        'success': False,
+                        'result': {
+                            'password': response.get('result'),
+                            'must_change': force_resp.get('result'),
+                        },
+                    }
         except LDAPException as e:
             self.logger.error("Exception occurred while setting password for user %s: %s",
                               account_label, str(e))
@@ -359,16 +387,21 @@ class ADUserService:
 
         Required:
             - attrs['objectClass'] should include 'user'
-            - attrs should include minimal identity fields 
+            - attrs should include minimal identity fields
                 (e.g., sAMAccountName, userPrincipalName, sn, givenName, displayName)
         Optional:
             - set_password: if provided, sets the password post-create
-            - enable_after_create: if True, enables the user after create 
+            - must_change_password_at_next_logon: if True, forces password change
+                at next logon (only applies when set_password is provided)
+            - enable_after_create: if True, enables the user after create
                 (requires password set first in most setups)
         """
         set_password = options.get('set_password')
+        must_change_password = options.get('must_change_password_at_next_logon', False)
         enable_after_create = options.get('enable_after_create', False)
-        unexpected_options = set(options) - {'set_password', 'enable_after_create'}
+        unexpected_options = set(options) - {
+            'set_password', 'must_change_password_at_next_logon', 'enable_after_create'
+        }
         if unexpected_options:
             raise ValueError(f"Unsupported options provided: {sorted(unexpected_options)}")
 
@@ -391,7 +424,9 @@ class ADUserService:
 
         # Optional: set password then enable
         if set_password:
-            pw_resp = self.set_password(dn, set_password)
+            pw_resp = self.set_password(
+                dn, set_password, must_change_at_next_logon=must_change_password
+            )
             if not pw_resp.get('success'):
                 self.logger.warning("Set password failed for %s: %s", dn, pw_resp.get('result'))
                 # You may choose to return failure or proceed; here we surface partial failure:

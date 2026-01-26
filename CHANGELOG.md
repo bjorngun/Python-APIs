@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 <!-- insertion marker -->
+## [v0.4.13](https://github.com/bjorngun/Python-APIs/releases/tag/v0.4.13) - 2026-01-26
+
+### Added
+
+- `force_change_password_at_next_logon` method to ADConnection for setting/clearing the "User must change password at next logon" flag via `pwdLastSet` attribute
+- `must_change_at_next_logon` parameter to `ADUserService.set_password()` for forcing password change at next logon
+- `must_change_password_at_next_logon` option to `ADUserService.create_user()` for setting password change requirement during user creation
+- 7 new unit tests for password change functionality (55 total tests)
+
 ## Unreleased
 
 ### Added

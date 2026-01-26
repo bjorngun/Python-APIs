@@ -166,6 +166,19 @@ service.add_member(user, group_dn)
 # Modify a user's attributes
 changes = [('displayName', 'New Display Name')]
 service.modify(user, changes)
+
+# Set password with optional force change at next logon
+service.set_password(user, 'NewSecureP@ssw0rd!', must_change_at_next_logon=True)
+
+# Create a new user with password and force change at next logon
+result = service.create_user(
+    cn='John Doe',
+    ou_dn='OU=Users,DC=example,DC=com',
+    attrs={'sAMAccountName': 'jdoe', 'userPrincipalName': 'jdoe@example.com'},
+    set_password='InitialP@ssw0rd!',
+    must_change_password_at_next_logon=True,
+    enable_after_create=True,
+)
 ```
 
 ## Running Tests

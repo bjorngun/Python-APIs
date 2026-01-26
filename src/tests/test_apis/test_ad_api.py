@@ -148,6 +148,33 @@ class TestADConnection(unittest.TestCase):
         self.assertTrue(result['success'])
         self.assertEqual(result['result'], {'description': 'success'})
 
+    def test_force_change_password_at_next_logon_force_true(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        distinguished_name = 'CN=John Doe,OU=users,DC=example,DC=com'
+
+        self.mock_connection.modify.return_value = True
+        self.mock_connection.result = {'description': 'success'}
+
+        result = ad_conn.force_change_password_at_next_logon(distinguished_name, force=True)
+
+        expected_changes = {'pwdLastSet': [MODIFY_REPLACE, 0]}
+        self.mock_connection.modify.assert_called_once_with(distinguished_name, expected_changes)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['result'], {'description': 'success'})
+
+    def test_force_change_password_at_next_logon_force_false(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        distinguished_name = 'CN=John Doe,OU=users,DC=example,DC=com'
+
+        self.mock_connection.modify.return_value = True
+        self.mock_connection.result = {'description': 'success'}
+
+        result = ad_conn.force_change_password_at_next_logon(distinguished_name, force=False)
+
+        expected_changes = {'pwdLastSet': [MODIFY_REPLACE, -1]}
+        self.mock_connection.modify.assert_called_once_with(distinguished_name, expected_changes)
+        self.assertTrue(result['success'])
+
 
 if __name__ == '__main__':
     unittest.main()

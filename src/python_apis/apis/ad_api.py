@@ -260,9 +260,28 @@ class ADConnection:
     def set_password(self, distinguished_name: str, new_password: str) -> dict[str, Any]:
         """Set the user's password. Requires LDAPS/StartTLS and appropriate rights.
         """
-
         password_ext = self.connection.extend.microsoft
         success = password_ext.modify_password(distinguished_name, new_password)
+        return {'result': self.connection.result, 'success': success}
+
+    def force_change_password_at_next_logon(
+        self, distinguished_name: str, force: bool = True
+    ) -> dict[str, Any]:
+        """Set or clear the 'User must change password at next logon' flag.
+
+        Args:
+            distinguished_name (str): The user's distinguished name.
+            force (bool): If True, user must change password at next logon.
+                          If False, clears the flag (sets pwdLastSet to -1).
+
+        Returns:
+            dict[str, Any]: Result payload containing the LDAP response and success flag.
+        """
+        # pwdLastSet = 0 means "must change password at next logon"
+        # pwdLastSet = -1 means "set to current time" (clears the flag)
+        pwd_last_set_value = 0 if force else -1
+        changes = {'pwdLastSet': [MODIFY_REPLACE, pwd_last_set_value]}
+        success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
     def enable_user(self, distinguished_name: str) -> dict[str, Any]:

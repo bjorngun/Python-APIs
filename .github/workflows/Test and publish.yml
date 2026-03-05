@@ -7,6 +7,24 @@ on:
     branches: [main]
 
 jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4.2.2
+
+    - name: Set up Python
+      uses: actions/setup-python@v5.6.0
+      with:
+        python-version: '3.14'
+
+    - name: Install bosos-dev-tools
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install bosos-dev-tools
+
+    - name: Check markdown links
+      run: md-link-checker --root .
+
   test:
     runs-on: windows-latest
     strategy:
@@ -34,7 +52,7 @@ jobs:
       run: python -m unittest discover -s src/tests -p "test_*.py" -v
 
   publish:
-    needs: test
+    needs: [check-links, test]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:

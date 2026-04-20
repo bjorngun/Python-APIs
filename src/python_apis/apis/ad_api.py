@@ -8,6 +8,8 @@ AD to run it effectively.
 """
 
 import collections
+import functools
+import logging
 import ssl
 from typing import Any
 
@@ -15,6 +17,30 @@ from ldap3.utils.log import set_library_log_detail_level, BASIC
 from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, GSSAPI,
                    Connection, Server, ServerPool, Tls)
+from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
+
+logger = logging.getLogger(__name__)
+
+_RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
+
+
+def _auto_reconnect(method):
+    """Decorator that retries the wrapped method once after a rebind
+    when a recoverable LDAP session/communication error is raised."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except _RECOVERABLE_EXCEPTIONS as exc:
+            logger.warning(
+                "LDAP session error in %s, attempting rebind: %s",
+                method.__name__, exc,
+            )
+            self.rebind()
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class ADConnectionError(Exception):
@@ -34,6 +60,7 @@ class ADConnection:
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
 
+        self._servers = servers
         self.connection = self._get_connection(servers)
         self.search_base = search_base
 
@@ -60,6 +87,23 @@ class ADConnection:
             )
         return connection
 
+    def rebind(self) -> None:
+        """Re-establish the LDAP connection using the original server list.
+
+        Call this explicitly to force a fresh bind, or rely on the automatic
+        reconnect behaviour built into every public operation method.
+        """
+        logger.info("Re-binding to Active Directory.")
+        self._close_connection()
+        self.connection = self._get_connection(self._servers)
+
+    def _close_connection(self) -> None:
+        """Attempt to cleanly close the current LDAP connection."""
+        try:
+            self.connection.unbind()
+        except (LDAPSessionTerminatedByServerError, LDAPCommunicationError, OSError):
+            logger.debug("Could not cleanly unbind the previous connection.")
+
     def _get_paged_search(self, search_filter: str, attributes: list[str]):
         """Returns a entry_generator.
         """
@@ -85,6 +129,7 @@ class ADConnection:
 
         ad_object['ou'] = ','.join(distinguished_name.split(',')[1:])
 
+    @_auto_reconnect
     def search(
         self, search_filter: str, attributes: list[str] | None = None
     ) -> list[dict[str, str]]:
@@ -122,6 +167,7 @@ class ADConnection:
         search_result = self.search(search_filter, attributes)
         return search_result[0] if len(search_result) > 0 else collections.defaultdict(lambda: '')
 
+    @_auto_reconnect
     def modify(self, distinguished_name: str, changes: list[tuple[str, str]]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of changes.
 
@@ -140,6 +186,7 @@ class ADConnection:
         success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
+    @_auto_reconnect
     def add_value(self, distinguished_name: str, changes: dict[str, str]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of field and value where the value is added to
         the field specified, this is very useful to add a value to a list.
@@ -159,6 +206,7 @@ class ADConnection:
         success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
+    @_auto_reconnect
     def remove_value(self, distinguished_name: str, changes: dict[str, str]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of field and value where the specified value is
         removed to the field specified, this is very useful to add a value to a
@@ -209,6 +257,7 @@ class ADConnection:
         changes = {'member': user_dn}
         return self.remove_value(group_dn, changes)
 
+    @_auto_reconnect
     def move_entry(self, distinguished_name: str, new_ou_dn: str) -> dict[str, Any]:
         """Move an AD object to the provided OU while keeping the same relative DN.
 
@@ -228,6 +277,7 @@ class ADConnection:
         )
         return {'result': self.connection.result, 'success': success}
 
+    @_auto_reconnect
     def rename_dn(self, distinguished_name: str, new_relative_dn: str) -> dict[str, Any]:
         """Rename an AD object's relative DN (CN) while keeping it in the same OU.
 
@@ -248,6 +298,7 @@ class ADConnection:
     # ---------------------------------------------------------------------
     # Create new user
     # ---------------------------------------------------------------------
+    @_auto_reconnect
     def add_entry(self, distinguished_name: str, attributes: dict[str, object]) -> dict[str, Any]:
         """Create a new AD object (e.g., user) at the given DN with the provided attributes.
         `attributes` MUST include a valid objectClass list,
@@ -257,6 +308,7 @@ class ADConnection:
         success = self.connection.add(distinguished_name, attributes=attributes)
         return {'result': self.connection.result, 'success': success}
 
+    @_auto_reconnect
     def set_password(self, distinguished_name: str, new_password: str) -> dict[str, Any]:
         """Set the user's password. Requires LDAPS/StartTLS and appropriate rights.
         """
@@ -264,6 +316,7 @@ class ADConnection:
         success = password_ext.modify_password(distinguished_name, new_password)
         return {'result': self.connection.result, 'success': success}
 
+    @_auto_reconnect
     def force_change_password_at_next_logon(
         self, distinguished_name: str, force: bool = True
     ) -> dict[str, Any]:
@@ -284,6 +337,7 @@ class ADConnection:
         success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
+    @_auto_reconnect
     def enable_user(self, distinguished_name: str) -> dict[str, Any]:
         """Enable an AD user by setting userAccountControl to 512 (NORMAL_ACCOUNT).
         """
@@ -292,6 +346,7 @@ class ADConnection:
         success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
+    @_auto_reconnect
     def disable_user(self, distinguished_name: str) -> dict[str, Any]:
         """Disable an AD user by setting userAccountControl to 514 (ACCOUNTDISABLE).
         """

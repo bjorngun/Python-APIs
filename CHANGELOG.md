@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - rename_user_cn functionality to ADUserService for renaming user common names
 - Python 3.14 support and optimized CI/CD workflows  
 - Comprehensive test coverage (100% function coverage with 48 tests)
+- Automatic LDAP reconnect/rebind on session expiry or communication errors in `ADConnection`
+- Public `rebind()` method on `ADConnection` for explicit re-establishment of the LDAP session
+- 8 new unit tests for reconnect behaviour (64 total tests)
 
 ### Fixed
 

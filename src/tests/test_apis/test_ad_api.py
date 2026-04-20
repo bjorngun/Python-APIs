@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import ssl
 from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, ALL_ATTRIBUTES, SUBTREE, SASL, GSSAPI
+from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 from python_apis.apis.ad_api import ADConnection, ADConnectionError, ADMissingServersError
 
 
@@ -174,6 +175,120 @@ class TestADConnection(unittest.TestCase):
         expected_changes = {'pwdLastSet': [MODIFY_REPLACE, -1]}
         self.mock_connection.modify.assert_called_once_with(distinguished_name, expected_changes)
         self.assertTrue(result['success'])
+
+
+class TestAutoReconnect(unittest.TestCase):
+    """Tests for the automatic rebind-on-failure behaviour."""
+
+    def setUp(self):
+        self.servers = ['ldap://server1', 'ldap://server2']
+        self.search_base = 'dc=example,dc=com'
+
+        patcher = patch('python_apis.apis.ad_api.Connection')
+        self.mock_connection_cls = patcher.start()
+        self.mock_connection = MagicMock()
+        self.mock_connection.bind.return_value = True
+        self.mock_connection_cls.return_value = self.mock_connection
+        self.addCleanup(patcher.stop)
+
+    # -- rebind ---------------------------------------------------------
+
+    def test_rebind_creates_new_connection(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        old_connection = ad_conn.connection
+
+        new_mock_connection = MagicMock()
+        new_mock_connection.bind.return_value = True
+        self.mock_connection_cls.return_value = new_mock_connection
+
+        ad_conn.rebind()
+
+        self.assertIsNot(ad_conn.connection, old_connection)
+        old_connection.unbind.assert_called_once()
+
+    def test_rebind_still_works_when_unbind_raises_session_terminated(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.unbind.side_effect = LDAPSessionTerminatedByServerError()
+
+        ad_conn.rebind()  # should not raise
+
+        self.assertIsNotNone(ad_conn.connection)
+
+    def test_rebind_still_works_when_unbind_raises_communication_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.unbind.side_effect = LDAPCommunicationError()
+
+        ad_conn.rebind()  # should not raise
+
+        self.assertIsNotNone(ad_conn.connection)
+
+    def test_rebind_still_works_when_unbind_raises_os_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.unbind.side_effect = OSError("socket closed")
+
+        ad_conn.rebind()  # should not raise
+
+        self.assertIsNotNone(ad_conn.connection)
+
+    # -- decorator: retry on session error ------------------------------
+
+    def test_search_retries_on_session_terminated(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        good_result = [{'attributes': {'cn': 'Jane Doe'}}]
+        self.mock_connection.extend.standard.paged_search.side_effect = [
+            LDAPSessionTerminatedByServerError(),
+            iter(good_result),
+        ]
+
+        results = ad_conn.search('(cn=Jane Doe)', ['cn'])
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['cn'], 'Jane Doe')
+
+    def test_modify_retries_on_communication_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.modify.side_effect = [
+            LDAPCommunicationError(),
+            True,
+        ]
+        self.mock_connection.result = {'description': 'success'}
+
+        result = ad_conn.modify(
+            'CN=John,OU=users,DC=example,DC=com',
+            [('department', 'IT')],
+        )
+
+        self.assertTrue(result['success'])
+
+    # -- decorator: non-recoverable errors propagate --------------------
+
+    def test_search_does_not_retry_on_value_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = ValueError("bad filter")
+
+        with self.assertRaises(ValueError):
+            ad_conn.search('bad', ['cn'])
+
+    # -- decorator: second attempt also fails ---------------------------
+
+    def test_search_propagates_error_when_retry_also_fails(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = (
+            LDAPSessionTerminatedByServerError()
+        )
+
+        with self.assertRaises(LDAPSessionTerminatedByServerError):
+            ad_conn.search('(cn=Ghost)', ['cn'])
+
+    # -- rebind failure propagates ADConnectionError --------------------
+
+    def test_rebind_failure_propagates_connection_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.bind.return_value = False
+        self.mock_connection.result = {'description': 'Kerberos expired'}
+
+        with self.assertRaises(ADConnectionError):
+            ad_conn.rebind()
 
 
 if __name__ == '__main__':

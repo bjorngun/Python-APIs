@@ -70,13 +70,70 @@ jobs:
       run: |
         python -m pip install --upgrade pip build twine
 
+    - name: Determine SemVer bump from merged PR label
+      id: semver
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+
+        pr_number=$(gh api \
+          -H "Accept: application/vnd.github+json" \
+          "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+          --jq '.[0].number // empty')
+
+        if [ -z "$pr_number" ]; then
+          echo "::error::No pull request found for commit ${GITHUB_SHA}."
+          echo "::error::Publishing requires a merged PR with exactly one SemVer label: semver:major, semver:minor, or semver:none."
+          exit 1
+        fi
+
+        semver_labels=$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json labels \
+          --jq '.labels[].name | select(startswith("semver:"))')
+
+        semver_count=$(printf '%s\n' "$semver_labels" | sed '/^$/d' | wc -l | tr -d ' ')
+        if [ "$semver_count" -ne 1 ]; then
+          echo "::error::PR #$pr_number must have exactly one SemVer label (semver:major, semver:minor, semver:none)."
+          echo "Found labels: ${semver_labels:-<none>}"
+          exit 1
+        fi
+
+        semver_label=$(printf '%s\n' "$semver_labels" | sed '/^$/d')
+        case "$semver_label" in
+          semver:major)
+            bump_type="major"
+            publish_enabled="true"
+            ;;
+          semver:minor)
+            bump_type="minor"
+            publish_enabled="true"
+            ;;
+          semver:none)
+            bump_type="none"
+            publish_enabled="false"
+            ;;
+          *)
+            echo "::error::Unsupported SemVer label: $semver_label"
+            exit 1
+            ;;
+        esac
+
+        echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+        echo "semver_label=$semver_label" >> "$GITHUB_OUTPUT"
+        echo "bump_type=$bump_type" >> "$GITHUB_OUTPUT"
+        echo "publish_enabled=$publish_enabled" >> "$GITHUB_OUTPUT"
+
+        echo "Resolved release mode: PR #$pr_number, label=$semver_label, bump=$bump_type, publish=$publish_enabled"
+
     - name: Bump version
       id: bump
+      if: steps.semver.outputs.publish_enabled == 'true'
       run: |
         chmod +x .github/scripts/bump-version.sh
-        .github/scripts/bump-version.sh patch
+        .github/scripts/bump-version.sh "${{ steps.semver.outputs.bump_type }}"
 
     - name: Commit version bump
+      if: steps.semver.outputs.publish_enabled == 'true'
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
@@ -84,7 +141,14 @@ jobs:
         git commit -m "chore: Bump version to ${{ steps.bump.outputs.new_version }} [skip ci]"
         git push
 
+    - name: Skip publish for semver:none
+      if: steps.semver.outputs.publish_enabled == 'false'
+      run: |
+        echo "SemVer label is semver:none for PR #${{ steps.semver.outputs.pr_number }}."
+        echo "Skipping version bump and PyPI publish."
+
     - name: Build and publish
+      if: steps.semver.outputs.publish_enabled == 'true'
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}

@@ -26,6 +26,9 @@ Welcome to the **Python APIs for Active Directory and SQL Integration** project.
     - [Working with AD Users](#working-with-ad-users)
   - [Running Tests](#running-tests)
   - [Linting and Code Quality](#linting-and-code-quality)
+  - [Versioning and Release Flow](#versioning-and-release-flow)
+  - [Planning Workflow](#planning-workflow)
+  - [PR Workflow Skills](#pr-workflow-skills)
   - [Project Structure](#project-structure)
   - [Contributing](#contributing)
   - [License](#license)
@@ -221,6 +224,57 @@ We use `pylint` to maintain code quality and adherence to PEP 8 standards.
 
    You can adjust linting rules by modifying the `.pylintrc` file in the project root.
 
+## Versioning and Release Flow
+
+This project uses label-driven SemVer for releases from `main`.
+
+- Every merged PR that should trigger release automation must have exactly one SemVer label:
+  - `semver:major` -> bumps major (`X+1.0.0`) and publishes.
+  - `semver:minor` -> bumps minor (`X.Y+1.0`) and publishes.
+  - `semver:none` -> no version bump and no publish.
+- The publish workflow resolves the bump type from the merged PR label and fails if the label is
+  missing or ambiguous.
+- Breaking changes must use `semver:major`.
+
+Examples:
+
+- New backward-compatible API feature: label PR with `semver:minor`.
+- Internal refactor with no user-visible release impact: label PR with `semver:none`.
+- Removed legacy behavior or other incompatible API change: label PR with `semver:major`.
+
+If you are unsure about compatibility impact, default to opening discussion in the PR and do not
+merge until the SemVer label is agreed.
+
+## Planning Workflow
+
+This project includes a repo skill at `.github/skills/plan-issue/SKILL.md`.
+
+- Use `/plan-issue <number>` to plan against a GitHub issue in this repository.
+- Example: `/plan-issue 100` means GitHub issue `#100` in this repository.
+- Plan files are created under `.planning/` for local tracking and are git-ignored.
+- The plan protocol requires committing completed work **after each task**.
+
+If a task is large, break it into smaller numbered tasks so each completed task can be committed
+cleanly.
+
+## PR Workflow Skills
+
+This repository also includes PR helper skills:
+
+- `pr-create` at `.github/skills/pr-create/SKILL.md`
+  - Creates PRs using a structured description and compares against `origin/main`.
+- `pr-comments` at `.github/skills/pr-comments/SKILL.md`
+  - Processes unresolved review comments carefully and resolves threads as they are addressed.
+
+Typical usage examples:
+
+- `create PR`
+- `draft PR`
+- `address PR comments`
+
+For all release-relevant PRs, remember to set exactly one SemVer label:
+`semver:major`, `semver:minor`, or `semver:none`.
+
 ## Project Structure
 
 ```md
@@ -277,6 +331,11 @@ We welcome contributions! Please follow these guidelines:
 5. **Commit Changes**: Write clear and concise commit messages.
 
 6. **Push and Open a Pull Request**: Push your branch to your fork and open a PR against the main repository.
+
+7. **Keep Package Integrity**:
+   - Preserve backward compatibility unless the change is explicitly breaking and labeled `semver:major`.
+   - Add migration notes for public API behavior changes.
+   - Do not hide partial failures in batch operations; return or document failure details clearly.
 
 ## License
 

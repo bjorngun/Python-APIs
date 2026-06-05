@@ -116,3 +116,74 @@ Top-level exports from `python_apis`:
 2. **Linting:** `pylint src/python_apis/` — must score 10/10 (CI fails on any warning or error).
 
 Do not push until both checks pass locally.
+
+---
+
+### Versioning and Release Rules (SemVer Labels)
+
+This repository uses PR-label-driven versioning in CI.
+
+- Exactly one SemVer label must be set on release-relevant PRs:
+  - `semver:major` -> major bump and publish.
+  - `semver:minor` -> minor bump and publish.
+  - `semver:none` -> no bump, no publish.
+- The publish workflow on `main` resolves bump type from the merged PR label and fails if no
+  SemVer label is found or if multiple SemVer labels exist.
+
+Agent expectations when preparing changes:
+
+- Always call out expected SemVer impact in PR descriptions and issue updates.
+- If behavior is not fully backward compatible, explicitly recommend `semver:major`.
+- For purely additive backward-compatible behavior, recommend `semver:minor`.
+- For docs/chore/internal-only changes with no release impact, recommend `semver:none`.
+- Do not manually edit package version just to force a release type; CI controls version bumping.
+
+---
+
+### Planning Skill (`plan-issue`)
+
+This repository includes a custom planning skill:
+
+- Path: `.github/skills/plan-issue/SKILL.md`
+- Command intent: `/plan-issue <number>` targets GitHub issue `#<number>` in this repository.
+  - Example: `/plan-issue 100` means GitHub issue `#100` for this repo.
+
+Agent expectations while executing a plan:
+
+- Use the plan file in `.planning/` as the authoritative task tracker.
+- Mark task status as work progresses (`In progress`, `Done`, `Blocked`).
+- Commit immediately after each completed task.
+- Keep commits scoped to task boundaries with clear issue-linked messages.
+
+---
+
+### PR Skills (`pr-create`, `pr-comments`)
+
+This repository includes PR workflow skills:
+
+- `.github/skills/pr-create/SKILL.md`
+- `.github/skills/pr-comments/SKILL.md`
+
+Agent expectations:
+
+- `pr-create`:
+  - Compare against `origin/main`, rebase, and ensure branch is pushed before opening PR.
+  - Use a structured PR body (`Description`, `Changes`, `Testing`).
+  - Ensure SemVer impact is explicit so PR can be labeled with exactly one of
+    `semver:major`, `semver:minor`, or `semver:none`.
+- `pr-comments`:
+  - Validate each unresolved review comment against current code before changing anything.
+  - Apply small valid fixes directly; ask user for uncertain or large changes.
+  - Resolve review threads as they are processed.
+  - Commit addressed feedback with clear, issue-aware messages.
+
+---
+
+### Integrity Guardrails
+
+Keep these rules strict for package stability:
+
+- Any public API shape/signature change must include compatibility behavior and migration guidance.
+- Do not remove legacy-compatible behavior except under an explicitly scoped `semver:major` change.
+- For AD batch reads, do not silently drop failed records; surface structured failure details.
+- If SemVer impact is unclear, stop and ask before merging or creating a release PR.

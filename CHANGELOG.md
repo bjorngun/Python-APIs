@@ -1,5 +1,7 @@
 # Changelog
 
+<!-- markdownlint-disable MD024 -->
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
@@ -25,6 +27,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Automatic LDAP reconnect/rebind on session expiry or communication errors in `ADConnection`
 - Public `rebind()` method on `ADConnection` for explicit re-establishment of the LDAP session
 - 8 new unit tests for reconnect behaviour (64 total tests)
+- Repository planning and PR workflow skills: `plan-issue`, `pr-create`, and `pr-comments`
+- PR template and contributor guidance for SemVer labeling and task-bounded commit workflow
 
 ### Fixed
 
@@ -35,6 +39,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 - Optimized GitHub Actions workflow from 8 to 5 jobs for better efficiency
 - Updated Python version matrix to support 3.10-3.14
+- Publish workflow now derives version bump from merged PR SemVer label and skips publish for
+  `semver:none`
 
 ## [v0.4.9](https://github.com/bjorngun/Python-APIs/releases/tag/v0.4.9) - 2025-10-27
 

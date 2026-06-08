@@ -9,11 +9,23 @@ module or a few of them.
 from python_apis.services.ad_group_service import ADGroupService
 from python_apis.services.ad_user_service import ADUserService
 from python_apis.services.ad_ou_service import ADOrganizationalUnitService
+from python_apis.services.compatibility_mode import (
+    ADCompatibilityMode,
+    AD_COMPATIBILITY_ENV_VAR,
+    AD_COMPATIBILITY_MODES,
+    AD_DEFAULT_COMPATIBILITY_MODE,
+    resolve_service_compatibility_mode,
+)
 from python_apis.services.employee_service import EmployeeService
 
 __all__ = [
     "ADGroupService",
     "ADUserService",
     "ADOrganizationalUnitService",
+    "ADCompatibilityMode",
+    "AD_COMPATIBILITY_ENV_VAR",
+    "AD_COMPATIBILITY_MODES",
+    "AD_DEFAULT_COMPATIBILITY_MODE",
+    "resolve_service_compatibility_mode",
     "EmployeeService",
 ]

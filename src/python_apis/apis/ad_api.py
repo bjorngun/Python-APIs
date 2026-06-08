@@ -10,6 +10,7 @@ AD to run it effectively.
 import collections
 import functools
 import logging
+import os
 import ssl
 from typing import Any
 
@@ -22,6 +23,44 @@ from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedB
 logger = logging.getLogger(__name__)
 
 _RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
+
+AD_COMPATIBILITY_MODES = ('legacy', 'mixed', 'strict')
+AD_DEFAULT_COMPATIBILITY_MODE = 'legacy'
+AD_COMPATIBILITY_ENV_VAR = 'PYTHON_APIS_AD_COMPAT_MODE'
+
+
+def resolve_ad_compatibility_mode(
+    per_call_mode: str | None = None,
+    service_mode: str | None = None,
+    env_mode: str | None = None,
+) -> str:
+    """Resolve the effective AD compatibility mode.
+
+    Precedence is deterministic and shared across AD APIs/services:
+    `per_call_mode` -> `service_mode` -> environment variable
+    (`PYTHON_APIS_AD_COMPAT_MODE`) -> `legacy`.
+
+    Any unknown, empty, or whitespace-only mode value falls back to `legacy`.
+    """
+
+    selected_env_mode = env_mode if env_mode is not None else os.getenv(AD_COMPATIBILITY_ENV_VAR)
+    candidates = (per_call_mode, service_mode, selected_env_mode)
+    for mode in candidates:
+        if mode is None:
+            continue
+        normalized_mode = str(mode).strip().lower()
+        if not normalized_mode:
+            continue
+        if normalized_mode in AD_COMPATIBILITY_MODES:
+            return normalized_mode
+        logger.warning(
+            "Unsupported AD compatibility mode '%s'. Falling back to '%s'.",
+            mode,
+            AD_DEFAULT_COMPATIBILITY_MODE,
+        )
+        return AD_DEFAULT_COMPATIBILITY_MODE
+
+    return AD_DEFAULT_COMPATIBILITY_MODE
 
 
 def _auto_reconnect(method):
@@ -54,6 +93,12 @@ class ADMissingServersError(Exception):
 class ADConnection:
     """This class contains the functionality concerning the
     connection and the methods that gets data from AD and can modify the AD.
+
+        Compatibility mode contract (Stage N):
+        - Supported modes: ``legacy``, ``mixed``, ``strict``.
+        - Mode precedence: per-call override, then service default, then environment
+            default, and finally ``legacy`` fallback.
+        - Invalid or empty mode values always resolve to ``legacy``.
     """
 
     def __init__(self, servers: list, search_base: str, enable_ldap_logging: bool = False):

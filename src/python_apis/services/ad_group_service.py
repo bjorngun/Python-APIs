@@ -18,6 +18,12 @@ from python_apis.schemas import ADGroupSchema
 
 class ADGroupService:
     """Service class for interacting with Active Directory groups.
+
+        Compatibility mode contract:
+        - Supported modes are ``legacy``, ``mixed``, and ``strict``.
+        - Effective mode precedence is per-call override, then service default,
+            then `PYTHON_APIS_AD_COMPAT_MODE`, then ``legacy`` fallback.
+        - Invalid or empty mode values must resolve to ``legacy`` deterministically.
     """
 
     def __init__(self, ad_connection: ADConnection = None, sql_connection: SQLConnection = None,

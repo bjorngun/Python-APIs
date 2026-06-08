@@ -257,6 +257,13 @@ This project includes a repo skill at `.github/skills/plan-issue/SKILL.md`.
 If a task is large, break it into smaller numbered tasks so each completed task can be committed
 cleanly.
 
+## Architecture Decision Records
+
+- AD response modernization policy is defined in ADR 0001:
+   `docs/adr/0001-ad-response-modernization.md`.
+- Use ADR 0001 as the source of truth for compatibility modes, envelope deprecation stages,
+   retry/error normalization expectations, and rollout sequencing.
+
 ## PR Workflow Skills
 
 This repository also includes PR helper skills:

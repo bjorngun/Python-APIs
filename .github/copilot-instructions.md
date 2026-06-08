@@ -155,6 +155,9 @@ Agent expectations while executing a plan:
 - Commit immediately after each completed task.
 - Keep commits scoped to task boundaries with clear issue-linked messages.
 
+For AD response modernization and compatibility rollout work, follow ADR 0001 as the primary
+policy source: `docs/adr/0001-ad-response-modernization.md`.
+
 ---
 
 ### PR Skills (`pr-create`, `pr-comments`)

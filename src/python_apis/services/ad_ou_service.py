@@ -16,6 +16,7 @@ from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADOrganizationalUnit, base
 from python_apis.schemas import ADOrganizationalUnitSchema
+from python_apis.services.compatibility_mode import resolve_service_compatibility_mode
 
 class ADOrganizationalUnitService:
     """Service class for interacting with Active Directory organizational units.
@@ -27,8 +28,13 @@ class ADOrganizationalUnitService:
         - Invalid or empty mode values must resolve to ``legacy`` deterministically.
     """
 
-    def __init__(self, ad_connection: ADConnection = None, sql_connection: SQLConnection = None,
-                 ldap_logging: bool = False):
+    def __init__(
+        self,
+        ad_connection: ADConnection = None,
+        sql_connection: SQLConnection = None,
+        ldap_logging: bool = False,
+        compatibility_mode: str | None = None,
+    ):
         """Initialize the ADOrganizationalUnitService with an ADConnection and a db connection.
 
         Args:
@@ -37,8 +43,14 @@ class ADOrganizationalUnitService:
             sql_connection (SQLConnection, optional): An existing SQLConnection instance.
                 If None, a new one will be created.
             ldap_logging (bool, optional): Whether to enable LDAP logging. Defaults to False.
+            compatibility_mode (str | None, optional): Default compatibility mode for the
+                service instance. Resolved with deterministic precedence against environment
+                defaults and fallback behavior.
         """
         self.logger = getLogger(__name__)
+        self.compatibility_mode = resolve_service_compatibility_mode(
+            service_mode=compatibility_mode
+        )
 
         if sql_connection is None:
             sql_connection = self._get_sql_connection()

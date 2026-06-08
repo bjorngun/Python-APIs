@@ -1,10 +1,16 @@
 # test_ad_api.py
 import unittest
 from unittest.mock import patch, MagicMock
+import os
 import ssl
-from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, ALL_ATTRIBUTES, SUBTREE, SASL, GSSAPI
+from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
-from python_apis.apis.ad_api import ADConnection, ADConnectionError, ADMissingServersError
+from python_apis.apis.ad_api import (
+    ADConnection,
+    ADConnectionError,
+    ADMissingServersError,
+    resolve_ad_compatibility_mode,
+)
 
 
 class TestADConnection(unittest.TestCase):
@@ -42,7 +48,7 @@ class TestADConnection(unittest.TestCase):
     def test_get_ad_connection(self, mock_server_cls, mock_server_pool_cls):
         mock_tls_obj = MagicMock()
         with patch('python_apis.apis.ad_api.Tls', return_value=mock_tls_obj) as mock_tls:
-            ad_conn = ADConnection(self.servers, self.search_base)
+            ADConnection(self.servers, self.search_base)
 
         mock_tls.assert_called_once_with(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
         self.assertEqual(mock_server_cls.call_count, len(self.servers))
@@ -204,7 +210,7 @@ class TestAutoReconnect(unittest.TestCase):
         ad_conn.rebind()
 
         self.assertIsNot(ad_conn.connection, old_connection)
-        old_connection.unbind.assert_called_once()
+        self.mock_connection.unbind.assert_called_once()
 
     def test_rebind_still_works_when_unbind_raises_session_terminated(self):
         ad_conn = ADConnection(self.servers, self.search_base)
@@ -289,6 +295,55 @@ class TestAutoReconnect(unittest.TestCase):
 
         with self.assertRaises(ADConnectionError):
             ad_conn.rebind()
+
+
+class TestCompatibilityModeResolution(unittest.TestCase):
+    """Tests for compatibility mode resolution precedence and fallback."""
+
+    def setUp(self):
+        self.env_var = 'PYTHON_APIS_AD_COMPAT_MODE'
+        self.original_env = os.environ.get(self.env_var)
+
+    def tearDown(self):
+        env = os.environ
+        if self.original_env is None:
+            env.pop(self.env_var, None)
+            return
+        env[self.env_var] = self.original_env
+
+    def test_per_call_mode_has_highest_precedence(self):
+        os.environ[self.env_var] = 'strict'
+
+        result = resolve_ad_compatibility_mode(
+            per_call_mode='mixed',
+            service_mode='legacy',
+        )
+
+        self.assertEqual(result, 'mixed')
+
+    def test_service_mode_used_when_per_call_missing(self):
+        os.environ[self.env_var] = 'strict'
+
+        result = resolve_ad_compatibility_mode(service_mode='mixed')
+
+        self.assertEqual(result, 'mixed')
+
+    def test_environment_mode_used_when_no_explicit_modes(self):
+        os.environ[self.env_var] = 'strict'
+
+        result = resolve_ad_compatibility_mode()
+
+        self.assertEqual(result, 'strict')
+
+    def test_legacy_fallback_for_invalid_mode(self):
+        result = resolve_ad_compatibility_mode(per_call_mode='invalid')
+
+        self.assertEqual(result, 'legacy')
+
+    def test_mode_values_are_normalized(self):
+        result = resolve_ad_compatibility_mode(per_call_mode='  MiXeD  ')
+
+        self.assertEqual(result, 'mixed')
 
 
 if __name__ == '__main__':

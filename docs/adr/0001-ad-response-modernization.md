@@ -1,6 +1,6 @@
 # ADR 0001: AD Response Modernization and Compatibility Policy
 
-- Status: Draft
+- Status: Accepted
 - Date: 2026-06-08
 - Related issue: #16
 

@@ -148,7 +148,6 @@ Create `.planning/issue-{issue-number}-{short-name}.md`.
 
 **Files:**
 - `CHANGELOG.md`
-- (verification output only)
 
 **Acceptance criteria:**
 - Verification commands pass.

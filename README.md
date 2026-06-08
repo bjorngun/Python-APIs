@@ -259,8 +259,7 @@ cleanly.
 
 ## Architecture Decision Records
 
-- AD response modernization policy is defined in ADR 0001:
-   `docs/adr/0001-ad-response-modernization.md`.
+- AD response modernization policy is defined in [ADR 0001](docs/adr/0001-ad-response-modernization.md).
 - Use ADR 0001 as the source of truth for compatibility modes, envelope deprecation stages,
    retry/error normalization expectations, and rollout sequencing.
 

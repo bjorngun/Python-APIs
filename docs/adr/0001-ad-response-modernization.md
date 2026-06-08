@@ -19,18 +19,18 @@ explicit compatibility modes, and deprecation control without breaking consumers
 Current implementation characteristics that this ADR must preserve in Stage N:
 
 - AD connection operations commonly return dictionaries with legacy keys such as `success` and
-	`result`.
+  `result`.
 - `ADConnection.get()` currently returns an empty-string `defaultdict` when no result is found,
-	rather than a typed not-found contract.
+  rather than a typed not-found contract.
 - LDAP communication/session failures are retried via reconnect logic in the API layer, including
-	paths that can perform write operations.
+  paths that can perform write operations.
 - User batch reads in service layer perform schema validation and can skip invalid records after
-	logging validation errors.
+  logging validation errors.
 
 Current release automation constraints:
 
 - Publish workflow derives bump type from merged PR SemVer label (`semver:major`,
-	`semver:minor`, `semver:none`).
+  `semver:minor`, `semver:none`).
 - Exactly one SemVer label is required for release-relevant PRs.
 - `semver:none` explicitly skips version bump and publish.
 

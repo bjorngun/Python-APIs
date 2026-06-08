@@ -45,7 +45,7 @@ Break the work into **phases** and **tasks**.
 - Group by shared context: tasks in a phase touch related files/concepts.
 - Keep phases small: aim for **2-5 tasks per phase**.
 - Order by dependency: earlier phases produce outputs later phases need.
-- **Every plan ends with a Cleanup phase** (build/test, verify, commit).
+- **Every plan ends with a Cleanup phase** (build/test, verify, changelog update, commit).
 
 **Suggested phase pattern**
 
@@ -54,7 +54,7 @@ Break the work into **phases** and **tasks**.
 | **0 - Setup** | Scaffolding, structural prep | Create files, registrations, models |
 | **1-N - Core** | Main feature/refactor | Implementation by context |
 | **N-1 - Polish** | Quality pass | Tests, edge cases, cleanup |
-| **N - Cleanup** | Finalize for PR | Verify, commit |
+| **N - Cleanup** | Finalize for PR | Verify, update `CHANGELOG.md`, commit |
 
 **Tasks**
 - Short, action-oriented name (3-8 words).
@@ -142,14 +142,16 @@ Create `.planning/issue-{issue-number}-{short-name}.md`.
 
 ## Phase N - Cleanup
 
-### Task N: Verify, test, and commit
+### Task N: Verify, test, update changelog, and commit
 
-**What:** Run project verification commands. Review changes and commit.
+**What:** Run project verification commands. Update `CHANGELOG.md` with a concise entry for the completed plan. Review changes and commit.
 
-**Files:** None (verification only).
+**Files:**
+- `CHANGELOG.md`
 
 **Acceptance criteria:**
 - Verification commands pass.
+- `CHANGELOG.md` updated to reflect the completed work.
 - All tasks marked `Done`.
 - Committed with clear message linked to issue number.
 ```
@@ -222,7 +224,8 @@ git commit -m "{type}(#${issue-number}): task {N} - short description"
 
 1. Run project verification commands (tests/lint/build relevant to the repo).
 2. Write a brief phase summary.
-3. Ensure all completed tasks are committed.
+3. If this is the final cleanup phase, update `CHANGELOG.md` before committing.
+4. Ensure all completed tasks are committed.
 
 ### Task Completion Checklist
 
@@ -230,4 +233,5 @@ Before marking any task Done:
 - [ ] Verification commands pass
 - [ ] Files touched listed in completion note
 - [ ] Key decisions documented
+- [ ] `CHANGELOG.md` updated (final cleanup task)
 - [ ] **Changes committed immediately for this task**

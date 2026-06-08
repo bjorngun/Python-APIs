@@ -14,6 +14,32 @@ production integrations.
 Issue #16 defines the governance and rollout policy for introducing richer response metadata,
 explicit compatibility modes, and deprecation control without breaking consumers in Stage N.
 
+## Baseline Behavior (Current State)
+
+Current implementation characteristics that this ADR must preserve in Stage N:
+
+- AD connection operations commonly return dictionaries with legacy keys such as `success` and
+	`result`.
+- `ADConnection.get()` currently returns an empty-string `defaultdict` when no result is found,
+	rather than a typed not-found contract.
+- LDAP communication/session failures are retried via reconnect logic in the API layer, including
+	paths that can perform write operations.
+- User batch reads in service layer perform schema validation and can skip invalid records after
+	logging validation errors.
+
+Current release automation constraints:
+
+- Publish workflow derives bump type from merged PR SemVer label (`semver:major`,
+	`semver:minor`, `semver:none`).
+- Exactly one SemVer label is required for release-relevant PRs.
+- `semver:none` explicitly skips version bump and publish.
+
+Known compatibility risks:
+
+- Downstream consumers may rely on legacy `result` payload shape and permissive return patterns.
+- Tightening not-found or validation behavior without compatibility mode can cause regressions.
+- Retry policy changes for write paths may alter observed side effects if not staged carefully.
+
 ## Scope
 
 This ADR defines:

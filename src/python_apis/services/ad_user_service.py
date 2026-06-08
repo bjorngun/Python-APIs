@@ -59,6 +59,13 @@ class ADUserService:
             ad_connection = self._get_ad_connection(ldap_logging)
         self.ad_connection = ad_connection
 
+    def _resolve_effective_mode(self, compatibility_mode: str | None = None) -> str:
+        """Resolve effective compatibility mode for a service operation."""
+        return resolve_service_compatibility_mode(
+            per_call_mode=compatibility_mode,
+            service_mode=self.compatibility_mode,
+        )
+
     def _get_sql_connection(self) -> SQLConnection:
         return SQLConnection(
             server=os.getenv('AD_DB_SERVER', os.getenv('DEFAULT_DB_SERVER')),
@@ -128,7 +135,11 @@ class ADUserService:
             self.logger.error('Rolling back changes, error: %s', e)
             raise e
 
-    def get_users_from_ad(self, search_filter: str = '(objectClass=user)') -> list[ADUser]:
+    def get_users_from_ad(
+        self,
+        search_filter: str = '(objectClass=user)',
+        compatibility_mode: str | None = None,
+    ) -> list[ADUser]:
         """Retrieve users from Active Directory based on a search filter.
 
         Args:
@@ -137,6 +148,9 @@ class ADUserService:
         Returns:
             list[ADUser]: A list of ADUser instances matching the search criteria.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug("Using AD compatibility mode '%s' for get_users_from_ad", effective_mode)
+
         attributes = ADUser.get_attribute_list()
         ad_users_dict = self.ad_connection.search(search_filter, attributes)
         ad_users = []
@@ -159,12 +173,22 @@ class ADUserService:
         #ad_users = [ADUser(**x) for x in ad_users_dict]
         return ad_users
 
-    def get_all_sam_account_names(self, search_filter: str = '(objectClass=user)') -> set[str]:
+    def get_all_sam_account_names(
+        self,
+        search_filter: str = '(objectClass=user)',
+        compatibility_mode: str | None = None,
+    ) -> set[str]:
         """Retrieve all sAMAccountName values from Active Directory.
 
         Returns:
             set[str]: A set of all sAMAccountName values.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_all_sam_account_names",
+            effective_mode,
+        )
+
         attributes = ['sAMAccountName']
         ad_users_dict = self.ad_connection.search(search_filter, attributes)
         sam_account_names = {str(user.get('sAMAccountName')) for user

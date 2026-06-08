@@ -60,6 +60,13 @@ class ADOrganizationalUnitService:
             ad_connection = self._get_ad_connection(ldap_logging)
         self.ad_connection = ad_connection
 
+    def _resolve_effective_mode(self, compatibility_mode: str | None = None) -> str:
+        """Resolve effective compatibility mode for a service operation."""
+        return resolve_service_compatibility_mode(
+            per_call_mode=compatibility_mode,
+            service_mode=self.compatibility_mode,
+        )
+
     def _get_sql_connection(self) -> SQLConnection:
         """Create and return a SQLConnection instance based on environment variables.
 
@@ -190,8 +197,11 @@ class ADOrganizationalUnitService:
             self.logger.error('Rolling back changes, error: %s', e)
             raise e
 
-    def get_ous_from_ad(self, search_filter: str = '(objectClass=organizationalUnit)'
-                        ) -> list[ADOrganizationalUnit]:
+    def get_ous_from_ad(
+        self,
+        search_filter: str = '(objectClass=organizationalUnit)',
+        compatibility_mode: str | None = None,
+    ) -> list[ADOrganizationalUnit]:
         """Retrieve organizational units from Active Directory based on a search filter.
 
         Args:
@@ -201,6 +211,9 @@ class ADOrganizationalUnitService:
             list[ADOrganizationalUnit]: A list of ADOrganizationalUnit instances matching the
             search criteria.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug("Using AD compatibility mode '%s' for get_ous_from_ad", effective_mode)
+
         attributes = ADOrganizationalUnit.get_attribute_list()
         ad_ous_dict = self.ad_connection.search(search_filter, attributes)
         ad_ous = []

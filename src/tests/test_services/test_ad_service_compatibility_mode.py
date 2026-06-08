@@ -2,7 +2,7 @@
 
 import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from python_apis.services import (
     ADGroupService,
@@ -10,6 +10,7 @@ from python_apis.services import (
     ADUserService,
 )
 from python_apis.services.compatibility_mode import AD_COMPATIBILITY_ENV_VAR
+from python_apis.services.compatibility_mode import resolve_service_compatibility_mode
 
 
 class TestServiceCompatibilityModeDefaults(unittest.TestCase):
@@ -57,6 +58,93 @@ class TestServiceCompatibilityModeDefaults(unittest.TestCase):
         )
 
         self.assertEqual(service.compatibility_mode, "legacy")
+
+    def test_service_supports_all_explicit_modes(self):
+        for mode in ("legacy", "mixed", "strict"):
+            with self.subTest(mode=mode):
+                user_service = ADUserService(
+                    ad_connection=self.mock_ad_connection,
+                    sql_connection=self.mock_sql_connection,
+                    compatibility_mode=mode,
+                )
+                group_service = ADGroupService(
+                    ad_connection=self.mock_ad_connection,
+                    sql_connection=self.mock_sql_connection,
+                    compatibility_mode=mode,
+                )
+                ou_service = ADOrganizationalUnitService(
+                    ad_connection=self.mock_ad_connection,
+                    sql_connection=self.mock_sql_connection,
+                    compatibility_mode=mode,
+                )
+
+                self.assertEqual(user_service.compatibility_mode, mode)
+                self.assertEqual(group_service.compatibility_mode, mode)
+                self.assertEqual(ou_service.compatibility_mode, mode)
+
+    def test_per_call_override_precedence_helper(self):
+        os.environ[AD_COMPATIBILITY_ENV_VAR] = "strict"
+
+        service = ADUserService(
+            ad_connection=self.mock_ad_connection,
+            sql_connection=self.mock_sql_connection,
+            compatibility_mode="legacy",
+        )
+
+        effective_mode = resolve_service_compatibility_mode(
+            per_call_mode="mixed",
+            service_mode=service.compatibility_mode,
+        )
+
+        self.assertEqual(effective_mode, "mixed")
+
+    def test_user_read_operation_accepts_per_call_override(self):
+        service = ADUserService(
+            ad_connection=self.mock_ad_connection,
+            sql_connection=self.mock_sql_connection,
+            compatibility_mode="legacy",
+        )
+        self.mock_ad_connection.search.return_value = []
+
+        with patch(
+            "python_apis.services.ad_user_service.resolve_service_compatibility_mode",
+            return_value="mixed",
+        ) as mock_resolve:
+            service.get_users_from_ad(compatibility_mode="mixed")
+
+        mock_resolve.assert_called_with(per_call_mode="mixed", service_mode="legacy")
+
+    def test_group_read_operation_accepts_per_call_override(self):
+        service = ADGroupService(
+            ad_connection=self.mock_ad_connection,
+            sql_connection=self.mock_sql_connection,
+            compatibility_mode="legacy",
+        )
+        self.mock_ad_connection.search.return_value = []
+
+        with patch(
+            "python_apis.services.ad_group_service.resolve_service_compatibility_mode",
+            return_value="mixed",
+        ) as mock_resolve:
+            service.get_groups_from_ad(compatibility_mode="mixed")
+
+        mock_resolve.assert_called_with(per_call_mode="mixed", service_mode="legacy")
+
+    def test_ou_read_operation_accepts_per_call_override(self):
+        service = ADOrganizationalUnitService(
+            ad_connection=self.mock_ad_connection,
+            sql_connection=self.mock_sql_connection,
+            compatibility_mode="legacy",
+        )
+        self.mock_ad_connection.search.return_value = []
+
+        with patch(
+            "python_apis.services.ad_ou_service.resolve_service_compatibility_mode",
+            return_value="mixed",
+        ) as mock_resolve:
+            service.get_ous_from_ad(compatibility_mode="mixed")
+
+        mock_resolve.assert_called_with(per_call_mode="mixed", service_mode="legacy")
 
 
 if __name__ == "__main__":

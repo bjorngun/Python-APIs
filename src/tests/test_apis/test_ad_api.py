@@ -30,6 +30,12 @@ class TestADConnection(unittest.TestCase):
         conn = ADConnection(self.servers, self.search_base)
         self.assertEqual(conn.search_base, self.search_base)
         self.assertIsNotNone(conn.connection)
+        self.assertEqual(conn.compatibility_mode, 'legacy')
+
+    def test_init_with_explicit_compatibility_mode(self):
+        conn = ADConnection(self.servers, self.search_base, compatibility_mode='strict')
+
+        self.assertEqual(conn.compatibility_mode, 'strict')
 
     def test_init_no_servers_raises_exception(self):
         with self.assertRaises(ADMissingServersError):

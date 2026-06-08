@@ -101,11 +101,18 @@ class ADConnection:
         - Invalid or empty mode values always resolve to ``legacy``.
     """
 
-    def __init__(self, servers: list, search_base: str, enable_ldap_logging: bool = False):
+    def __init__(
+        self,
+        servers: list,
+        search_base: str,
+        enable_ldap_logging: bool = False,
+        compatibility_mode: str | None = None,
+    ):
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
 
         self._servers = servers
+        self.compatibility_mode = resolve_ad_compatibility_mode(service_mode=compatibility_mode)
         self.connection = self._get_connection(servers)
         self.search_base = search_base
 

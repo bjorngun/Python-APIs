@@ -66,6 +66,14 @@ class ADUserService:
             service_mode=self.compatibility_mode,
         )
 
+    def get_compatibility_mode(self, compatibility_mode: str | None = None) -> dict[str, str]:
+        """Return service default and effective compatibility mode for this context."""
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        return {
+            'service_default_mode': self.compatibility_mode,
+            'effective_mode': effective_mode,
+        }
+
     def _get_sql_connection(self) -> SQLConnection:
         return SQLConnection(
             server=os.getenv('AD_DB_SERVER', os.getenv('DEFAULT_DB_SERVER')),

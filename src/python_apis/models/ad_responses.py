@@ -13,10 +13,10 @@ Stage N scope note:
     separately (issue #19).
 """
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ADResponse(BaseModel, Mapping):
@@ -72,6 +72,63 @@ class ADResponse(BaseModel, Mapping):
         return self.model_dump()
 
 
+class ADOperationResponse(ADResponse):
+    """Typed envelope for AD mutation operations.
+
+    Mirrors the legacy mutation payload ``{'result': ..., 'success': ...}`` while
+    exposing ``success`` and ``result`` as typed attributes. Both remain
+    available through dictionary access for legacy consumers.
+    """
+
+    success: bool
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class ADEntry(ADResponse):
+    """Typed, dict-compatible representation of a single AD object.
+
+    Used for single-object reads (for example ``ADConnection.get``). AD
+    attributes are dynamic, so all values are stored as mapping entries and are
+    accessible both as items (``entry['cn']``) and via ``get``.
+    """
+
+
+class ADSearchResponse(BaseModel, Sequence):
+    """Typed, list-compatible wrapper for multi-object AD reads.
+
+    Preserves the legacy ``list[dict]`` access pattern returned by
+    ``ADConnection.search`` while wrapping each result in a typed
+    :class:`ADEntry`. Supports indexing, iteration and ``len``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entries: list[ADEntry] = Field(default_factory=list)
+
+    def __getitem__(self, index: Any) -> Any:
+        """Return the entry (or slice of entries) at ``index``."""
+
+        return self.entries[index]
+
+    def __iter__(self) -> Iterator[ADEntry]:  # type: ignore[override]
+        """Iterate over the wrapped :class:`ADEntry` objects."""
+
+        return iter(self.entries)
+
+    def __len__(self) -> int:
+        """Return the number of entries."""
+
+        return len(self.entries)
+
+    def to_list(self) -> list[dict[str, Any]]:
+        """Return a plain, JSON-serializable ``list[dict]`` of the entries."""
+
+        return [entry.to_dict() for entry in self.entries]
+
+
 __all__: list[str] = [
     "ADResponse",
+    "ADOperationResponse",
+    "ADEntry",
+    "ADSearchResponse",
 ]

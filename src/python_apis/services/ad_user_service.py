@@ -81,12 +81,15 @@ class ADUserService:
         Thin wrapper over
         :func:`python_apis.services.compatibility_mode.finalize_ad_write_response`
         so all AD services share one envelope/legacy-mirroring implementation.
+        Retry telemetry captured by the most recent AD operation is surfaced on
+        the envelope.
         """
 
         return finalize_ad_write_response(
             legacy_response,
             effective_mode=effective_mode,
             exception=exception,
+            retry_telemetry=self.ad_connection.last_retry_telemetry,
         )
 
     def get_compatibility_mode(self, compatibility_mode: str | None = None) -> dict[str, str]:

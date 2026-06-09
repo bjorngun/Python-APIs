@@ -10,6 +10,7 @@ from python_apis.apis.ad_api import (
     AD_COMPATIBILITY_ENV_VAR,
     AD_COMPATIBILITY_MODES,
     AD_DEFAULT_COMPATIBILITY_MODE,
+    RetryTelemetry,
     resolve_ad_compatibility_mode,
 )
 from python_apis.models import ADOperationEnvelope
@@ -39,11 +40,29 @@ def resolve_service_compatibility_mode(
     )
 
 
+def _retry_envelope_kwargs(retry_telemetry: RetryTelemetry | None) -> dict[str, Any]:
+    """Translate captured retry telemetry into envelope ``from_operation`` kwargs.
+
+    Returns an empty mapping (safe envelope defaults) when no telemetry is
+    available, so callers can always ``**``-splat the result.
+    """
+
+    if retry_telemetry is None:
+        return {}
+    return {
+        "retry_count": retry_telemetry.retry_count,
+        "retried": retry_telemetry.retried,
+        "would_retry": retry_telemetry.would_retry,
+        "retry_policy": dict(retry_telemetry.policy) if retry_telemetry.policy else None,
+    }
+
+
 def finalize_ad_write_response(
     legacy_response: dict[str, Any],
     *,
     effective_mode: str,
     exception: BaseException | None = None,
+    retry_telemetry: RetryTelemetry | None = None,
 ) -> dict[str, Any]:
     """Shape an AD write-operation response for the effective compatibility mode.
 
@@ -54,6 +73,11 @@ def finalize_ad_write_response(
     while ``strict`` omits them. Operation-specific extras (for example ``dn``
     or ``changes``) are preserved as top-level keys and captured in
     ``request_context``.
+
+    When ``retry_telemetry`` is provided (typically
+    ``ADConnection.last_retry_telemetry`` captured immediately after the
+    operation), its retry counters and policy metadata are surfaced on the
+    envelope; ``legacy`` mode output is unaffected.
     """
 
     if effective_mode == "legacy":
@@ -79,6 +103,7 @@ def finalize_ad_write_response(
         exception=exception,
         request_context={**extras, "compatibility_mode": effective_mode},
         error_code=error_code,
+        **_retry_envelope_kwargs(retry_telemetry),
     )
     payload = envelope.to_response(effective_mode)
     for key, value in extras.items():

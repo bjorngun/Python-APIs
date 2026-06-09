@@ -174,27 +174,7 @@ class ADGroupService:
         effective_mode = self._resolve_effective_mode(compatibility_mode)
         self.logger.debug("Using AD compatibility mode '%s' for get_groups_from_ad", effective_mode)
 
-        attributes = ADGroup.get_attribute_list()
-        ad_groups_dict = self.ad_connection.search(search_filter, attributes)
-        ad_groups = []
-
-        for group_data in ad_groups_dict:
-            try:
-                self.set_group_type_name(group_data)
-                # Validate and parse data using Pydantic model
-                validated_data = ADGroupSchema(**group_data).model_dump()
-                # Create ADGroup instance
-                ad_group = ADGroup(**validated_data)
-                ad_groups.append(ad_group)
-            except ValidationError as e:
-                # Handle validation errors
-                self.logger.error(
-                    "Validation error for group %s: %s",
-                    group_data.get('distinguishedName'),
-                    e
-                )
-
-        return ad_groups
+        return self._groups_from_search(search_filter)
 
     def _groups_from_search(self, search_filter: str) -> list[ADGroup]:
         """Run a group search and build validated ``ADGroup`` instances.
@@ -257,27 +237,46 @@ class ADGroupService:
         search_filter = f"(&(objectClass=group)(member={escaped_dn}))"
         return self._groups_from_search(search_filter)
 
+    @staticmethod
+    def _derive_primary_group_sid(user_sid: str, primary_group_id: str) -> str | None:
+        """Derive a primary group's SID from the user's SID and primary group RID.
+
+        A user's primary group is not exposed via ``member``/``memberOf``. Its
+        SID shares the domain portion of the user's ``objectSid`` with the RID
+        replaced by ``primaryGroupID``. For example, user SID
+        ``S-1-5-21-A-B-C-1105`` with ``primaryGroupID=513`` yields the group SID
+        ``S-1-5-21-A-B-C-513``. Returns ``None`` when the user SID has no
+        derivable domain portion.
+        """
+
+        if not user_sid or '-' not in user_sid:
+            return None
+        domain_sid = user_sid.rsplit('-', 1)[0]
+        return f"{domain_sid}-{primary_group_id}"
+
     def resolve_primary_group(
         self,
-        user: ADUser | str,
+        user: ADUser,
         compatibility_mode: str | None = None,
     ) -> ADGroup | None:
         """Resolve a user's primary group.
 
-        A user's primary group is identified by ``primaryGroupID`` (a RID), which
-        is not surfaced through the ``member``/``memberOf`` linkage. This resolves
-        it against the group constructed attribute ``primaryGroupToken`` (equal to
-        the group's RID).
+        A user's primary group is identified by ``primaryGroupID`` (a RID) and is
+        not surfaced through the ``member``/``memberOf`` linkage. Because
+        ``primaryGroupToken`` is a constructed attribute that cannot be evaluated
+        in an LDAP search filter, the primary group's SID is derived from the
+        user's ``objectSid`` (domain portion) and ``primaryGroupID`` (RID), then
+        looked up via ``(&(objectClass=group)(objectSid=<sid>))``.
 
         Args:
-            user (ADUser | str): The user (its ``primaryGroupID`` is read), or the
-                ``primaryGroupID``/RID value directly.
+            user (ADUser): The user whose ``objectSid`` and ``primaryGroupID`` are
+                used to derive the primary group SID.
             compatibility_mode (str | None): Optional per-call compatibility mode
                 override (accepted for API symmetry; reads return typed models).
 
         Returns:
-            ADGroup | None: The primary group, or ``None`` when the user has no
-            ``primaryGroupID`` or no group matches.
+            ADGroup | None: The primary group, or ``None`` when the user is
+            missing ``objectSid``/``primaryGroupID`` or no group matches.
         """
 
         effective_mode = self._resolve_effective_mode(compatibility_mode)
@@ -285,16 +284,24 @@ class ADGroupService:
             "Using AD compatibility mode '%s' for resolve_primary_group", effective_mode
         )
 
-        primary_group_id = user.primaryGroupID if isinstance(user, ADUser) else user
-        if not primary_group_id:
-            self.logger.warning(
-                "Cannot resolve primary group: user has no primaryGroupID (%s)",
+        user_sid = getattr(user, 'objectSid', None)
+        primary_group_id = getattr(user, 'primaryGroupID', None)
+        if not user_sid or not primary_group_id:
+            self.logger.debug(
+                "Cannot resolve primary group: missing objectSid/primaryGroupID (%s)",
                 getattr(user, 'distinguishedName', user),
             )
             return None
 
-        escaped_id = escape_filter_chars(str(primary_group_id))
-        search_filter = f"(&(objectClass=group)(primaryGroupToken={escaped_id}))"
+        group_sid = self._derive_primary_group_sid(str(user_sid), str(primary_group_id))
+        if not group_sid:
+            self.logger.debug(
+                "Cannot derive primary group SID from user objectSid '%s'", user_sid
+            )
+            return None
+
+        escaped_sid = escape_filter_chars(group_sid)
+        search_filter = f"(&(objectClass=group)(objectSid={escaped_sid}))"
         groups = self._groups_from_search(search_filter)
         return groups[0] if groups else None
 

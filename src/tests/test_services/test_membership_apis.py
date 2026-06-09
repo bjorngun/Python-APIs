@@ -106,6 +106,7 @@ class TestMembershipAPIs(unittest.TestCase):
         ]
         user = ADUser(
             distinguishedName='CN=John,DC=example,DC=com',
+            objectSid='S-1-5-21-1-2-3-1105',
             primaryGroupID='513',
         )
 
@@ -114,34 +115,58 @@ class TestMembershipAPIs(unittest.TestCase):
         self.assertIsInstance(group, ADGroup)
         self.assertEqual(group.name, 'Domain Users')
         search_filter = self.mock_ad_connection.search.call_args[0][0]
+        # primaryGroupToken is a constructed attribute and cannot be filtered;
+        # the group SID is derived from the user's objectSid + primaryGroupID.
         self.assertEqual(
             search_filter,
-            '(&(objectClass=group)(primaryGroupToken=513))',
+            '(&(objectClass=group)(objectSid=S-1-5-21-1-2-3-513))',
         )
 
-    def test_primary_group_accepts_rid_string(self):
-        self.mock_ad_connection.search.return_value = [
-            _group_dict('CN=Domain Users,DC=example,DC=com', 'Domain Users'),
-        ]
-
-        group = self.service.resolve_primary_group('513')
-
-        self.assertIsInstance(group, ADGroup)
-        search_filter = self.mock_ad_connection.search.call_args[0][0]
-        self.assertIn('(primaryGroupToken=513)', search_filter)
-
     def test_primary_group_missing_id_returns_none_without_search(self):
-        user = ADUser(distinguishedName='CN=John,DC=example,DC=com', primaryGroupID=None)
+        user = ADUser(
+            distinguishedName='CN=John,DC=example,DC=com',
+            objectSid='S-1-5-21-1-2-3-1105',
+            primaryGroupID=None,
+        )
 
         group = self.service.resolve_primary_group(user)
 
         self.assertIsNone(group)
         self.mock_ad_connection.search.assert_not_called()
 
+    def test_primary_group_missing_object_sid_returns_none_without_search(self):
+        user = ADUser(
+            distinguishedName='CN=John,DC=example,DC=com',
+            objectSid=None,
+            primaryGroupID='513',
+        )
+
+        group = self.service.resolve_primary_group(user)
+
+        self.assertIsNone(group)
+        self.mock_ad_connection.search.assert_not_called()
+
+    def test_primary_group_escapes_filter_value(self):
+        self.mock_ad_connection.search.return_value = []
+        user = ADUser(
+            distinguishedName='CN=John,DC=example,DC=com',
+            objectSid='S-1-5-21-a(b)*-1105',
+            primaryGroupID='513',
+        )
+
+        self.service.resolve_primary_group(user)
+
+        search_filter = self.mock_ad_connection.search.call_args[0][0]
+        # Derived SID values must be escaped to prevent LDAP filter injection.
+        self.assertIn(r'\28', search_filter)  # (
+        self.assertIn(r'\29', search_filter)  # )
+        self.assertIn(r'\2a', search_filter)  # *
+
     def test_primary_group_no_match_returns_none(self):
         self.mock_ad_connection.search.return_value = []
         user = ADUser(
             distinguishedName='CN=John,DC=example,DC=com',
+            objectSid='S-1-5-21-1-2-3-1105',
             primaryGroupID='999',
         )
 

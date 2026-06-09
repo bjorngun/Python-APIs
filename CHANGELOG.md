@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   threading into AD write finalization across user/group/OU services (default read return types and
   `legacy` behavior unchanged)
 - Unit tests for AD retry telemetry capture and read/write retry reporting
+- Membership APIs v2 on `ADGroupService` (issue #22): `get_user_direct_groups(user)` returning the
+  user's direct group memberships (`list[ADGroup]` via `(&(objectClass=group)(member=<userDN>))`) and
+  `resolve_primary_group(user)` resolving the user's primary group (`ADGroup | None` via the group
+  `primaryGroupToken` constructed attribute), returning `None` gracefully when the user has no
+  `primaryGroupID`; both accept an `ADUser` or string, escape LDAP filter values, and reuse the
+  retry-capable read path (additive, backward-compatible)
+- Contract tests for the membership APIs covering happy and edge paths
 
 ### Fixed
 

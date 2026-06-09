@@ -257,6 +257,47 @@ class ADGroupService:
         search_filter = f"(&(objectClass=group)(member={escaped_dn}))"
         return self._groups_from_search(search_filter)
 
+    def resolve_primary_group(
+        self,
+        user: ADUser | str,
+        compatibility_mode: str | None = None,
+    ) -> ADGroup | None:
+        """Resolve a user's primary group.
+
+        A user's primary group is identified by ``primaryGroupID`` (a RID), which
+        is not surfaced through the ``member``/``memberOf`` linkage. This resolves
+        it against the group constructed attribute ``primaryGroupToken`` (equal to
+        the group's RID).
+
+        Args:
+            user (ADUser | str): The user (its ``primaryGroupID`` is read), or the
+                ``primaryGroupID``/RID value directly.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override (accepted for API symmetry; reads return typed models).
+
+        Returns:
+            ADGroup | None: The primary group, or ``None`` when the user has no
+            ``primaryGroupID`` or no group matches.
+        """
+
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for resolve_primary_group", effective_mode
+        )
+
+        primary_group_id = user.primaryGroupID if isinstance(user, ADUser) else user
+        if not primary_group_id:
+            self.logger.warning(
+                "Cannot resolve primary group: user has no primaryGroupID (%s)",
+                getattr(user, 'distinguishedName', user),
+            )
+            return None
+
+        escaped_id = escape_filter_chars(str(primary_group_id))
+        search_filter = f"(&(objectClass=group)(primaryGroupToken={escaped_id}))"
+        groups = self._groups_from_search(search_filter)
+        return groups[0] if groups else None
+
     def modify_group(
         self,
         group: ADGroup,

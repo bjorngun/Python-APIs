@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   global/env resolution (`PYTHON_APIS_AD_COMPAT_MODE`), service defaults, per-call overrides,
   and runtime introspection helpers for AD services and ADConnection
 - Expanded compatibility-mode coverage across AD API and service tests
+- Typed, dict-compatible AD response models (`ADResponse`, `ADOperationResponse`, `ADEntry`,
+  `ADSearchResponse`) with legacy-key parity, lossless `from_legacy`/`to_dict` adapters, and JSON
+  serialization (additive, non-breaking; exported from `python_apis.models`)
+- Contract tests pinning AD response model field names, types, dict-compatibility, and JSON
+  serializability
 
 ### Fixed
 

@@ -13,6 +13,7 @@ from python_apis.apis.ad_api import (
     resolve_ad_compatibility_mode,
 )
 from python_apis.models import ADOperationEnvelope
+from python_apis.services.error_taxonomy import resolve_error_code
 
 ADCompatibilityMode = Literal["legacy", "mixed", "strict"]
 
@@ -66,12 +67,18 @@ def finalize_ad_write_response(
     success = (
         False if exception is not None else bool(legacy_response.get("success"))
     )
+    error_code = resolve_error_code(
+        exception=exception,
+        ldap_result=legacy_response.get("result"),
+        success=success,
+    )
     envelope = ADOperationEnvelope.from_operation(
         operation_kind="write",
         success=success,
         ldap_result=legacy_response.get("result"),
         exception=exception,
         request_context={**extras, "compatibility_mode": effective_mode},
+        error_code=error_code,
     )
     payload = envelope.to_response(effective_mode)
     for key, value in extras.items():

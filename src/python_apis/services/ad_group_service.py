@@ -238,6 +238,7 @@ class ADGroupService:
                 {'success': False, 'result': str(e)},
                 effective_mode=effective_mode,
                 exception=e,
+                retry_telemetry=self.ad_connection.last_retry_telemetry,
             )
 
         if response is None:
@@ -262,6 +263,7 @@ class ADGroupService:
                 'changes': change_affects,
             },
             effective_mode=effective_mode,
+            retry_telemetry=self.ad_connection.last_retry_telemetry,
         )
 
     @staticmethod

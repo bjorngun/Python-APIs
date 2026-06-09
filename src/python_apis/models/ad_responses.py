@@ -141,7 +141,9 @@ class ADOperationEnvelope(ADResponse):
     envelope shape stays stable across the rollout:
 
     - ``error_code`` is populated by the normalized error taxonomy (issue #20).
-    - ``retry_count`` / ``retried`` are populated by retry telemetry (issue #21).
+    - ``retry_count`` / ``retried`` / ``would_retry`` / ``retry_policy`` are
+      populated by retry telemetry (issue #21). ``did_retry`` is a legacy-style
+      computed mirror of ``retried``.
     """
 
     success: bool
@@ -152,6 +154,8 @@ class ADOperationEnvelope(ADResponse):
     request_context: dict[str, Any] = Field(default_factory=dict)
     retry_count: int = 0
     retried: bool = False
+    would_retry: bool = False
+    retry_policy: dict[str, Any] | None = None
     error_code: str | None = None
 
     @computed_field
@@ -168,6 +172,13 @@ class ADOperationEnvelope(ADResponse):
 
         return self.exception_message
 
+    @computed_field
+    @property
+    def did_retry(self) -> bool:
+        """Telemetry mirror of :attr:`retried` (issue #21 vocabulary)."""
+
+        return self.retried
+
     @classmethod
     def from_operation(  # pylint: disable=too-many-arguments
         cls,
@@ -179,6 +190,8 @@ class ADOperationEnvelope(ADResponse):
         request_context: dict[str, Any] | None = None,
         retry_count: int = 0,
         retried: bool = False,
+        would_retry: bool = False,
+        retry_policy: dict[str, Any] | None = None,
         error_code: str | None = None,
     ) -> "ADOperationEnvelope":
         """Build an envelope from an AD operation outcome.
@@ -188,9 +201,9 @@ class ADOperationEnvelope(ADResponse):
         are derived from it and ``success`` defaults to ``False``; otherwise
         ``success`` defaults to ``True`` unless explicitly supplied.
 
-        ``retry_count``/``retried``/``error_code`` are accepted now for forward
-        compatibility with retry telemetry (issue #21) and the normalized error
-        taxonomy (issue #20); both currently default to safe values.
+        ``retry_count``/``retried``/``would_retry``/``retry_policy`` carry retry
+        telemetry (issue #21) and ``error_code`` carries the normalized error
+        taxonomy code (issue #20); all default to safe values.
         """
 
         exception_type: str | None = None
@@ -211,6 +224,8 @@ class ADOperationEnvelope(ADResponse):
             request_context=request_context or {},
             retry_count=retry_count,
             retried=retried,
+            would_retry=would_retry,
+            retry_policy=retry_policy,
             error_code=error_code,
         )
 

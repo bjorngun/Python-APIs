@@ -57,6 +57,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   compatibility modes (`legacy` responses remain byte-for-byte unchanged; successful ops carry
   `error_code = None`)
 - Unit tests for the AD error taxonomy and its service-layer integration
+- Retry telemetry and policy metadata on AD responses (issue #21): `ADOperationEnvelope` now carries
+  `would_retry`, `retry_policy`, and a `did_retry` mirror (alongside the existing `retry_count`/
+  `retried`), surfaced in `mixed`/`strict` modes (`legacy` responses remain byte-for-byte unchanged)
+- `RetryTelemetry` dataclass plus `AD_READ_RETRY_POLICY`/`AD_WRITE_RETRY_POLICY` policy constants and
+  `ADConnection.last_retry_telemetry`, capturing per-operation retry outcome (operation kind, attempt
+  count, retried/would-retry/recovered, policy) for the auto-reconnect path (read/write classified)
+- `finalize_ad_read_response` opt-in helper for structured AD read reporting and retry-telemetry
+  threading into AD write finalization across user/group/OU services (default read return types and
+  `legacy` behavior unchanged)
+- Unit tests for AD retry telemetry capture and read/write retry reporting
 
 ### Fixed
 

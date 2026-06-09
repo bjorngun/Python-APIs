@@ -75,18 +75,27 @@ class ADUserService:
         *,
         effective_mode: str,
         exception: BaseException | None = None,
+        from_ad_operation: bool = True,
     ) -> dict[str, Any]:
         """Shape a write-operation response for the effective compatibility mode.
 
         Thin wrapper over
         :func:`python_apis.services.compatibility_mode.finalize_ad_write_response`
         so all AD services share one envelope/legacy-mirroring implementation.
+        Retry telemetry captured by the most recent AD operation is surfaced on
+        the envelope. For local validation failures that short-circuit before any
+        AD call is made, pass ``from_ad_operation=False`` so stale telemetry from
+        a previous operation is not attributed to this response.
         """
 
+        retry_telemetry = (
+            self.ad_connection.last_retry_telemetry if from_ad_operation else None
+        )
         return finalize_ad_write_response(
             legacy_response,
             effective_mode=effective_mode,
             exception=exception,
+            retry_telemetry=retry_telemetry,
         )
 
     def get_compatibility_mode(self, compatibility_mode: str | None = None) -> dict[str, str]:
@@ -635,6 +644,7 @@ class ADUserService:
             return self._finalize_write(
                 {"success": False, "result": "User distinguishedName unavailable"},
                 effective_mode=effective_mode,
+                from_ad_operation=False,
             )
 
         # Extract the current OU from the DN (everything after the first comma)
@@ -643,6 +653,7 @@ class ADUserService:
             return self._finalize_write(
                 {"success": False, "result": "Invalid distinguishedName format"},
                 effective_mode=effective_mode,
+                from_ad_operation=False,
             )
 
         current_ou = dn_parts[1]

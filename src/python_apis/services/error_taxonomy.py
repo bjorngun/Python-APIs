@@ -184,6 +184,47 @@ def map_ldap_result_to_error_code(result: object) -> str | None:
     return _LDAP_RESULT_CODE_TO_CODE.get(code, AD_UNKNOWN)
 
 
+def resolve_error_code(
+    *,
+    exception: BaseException | None = None,
+    ldap_result: object = None,
+    success: bool | None = None,
+) -> str | None:
+    """Resolve a single canonical error code for an AD operation outcome.
+
+    Resolution order:
+
+    1. If ``exception`` is provided, map it (always yields a failure code).
+    2. Otherwise, if ``success`` is explicitly ``True``, return ``None``.
+    3. Otherwise inspect ``ldap_result``; a success state (``0``) returns
+       ``None``.
+    4. If ``success`` is ``False`` but no specific code was found, fall back to
+       :data:`AD_UNKNOWN`.
+
+    Returns ``None`` when the outcome represents success, otherwise a canonical
+    code string. The function is pure and deterministic.
+    """
+
+    if exception is not None:
+        return map_exception_to_error_code(exception)
+
+    if success is True:
+        return None
+
+    if ldap_result is not None:
+        code = map_ldap_result_to_error_code(ldap_result)
+        if code is not None:
+            return code
+        # ldap_result present but resolved to "no error" (success state).
+        if success is None:
+            return None
+
+    if success is False:
+        return AD_UNKNOWN
+
+    return None
+
+
 __all__ = [
     "AD_NOT_FOUND",
     "AD_VALIDATION_ERROR",
@@ -196,4 +237,5 @@ __all__ = [
     "AD_ERROR_CODES",
     "map_exception_to_error_code",
     "map_ldap_result_to_error_code",
+    "resolve_error_code",
 ]

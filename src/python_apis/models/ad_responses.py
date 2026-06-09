@@ -14,9 +14,11 @@ Stage N scope note:
 """
 
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
+
+_ADResponseT = TypeVar("_ADResponseT", bound="ADResponse")
 
 
 class ADResponse(BaseModel, Mapping):
@@ -71,6 +73,16 @@ class ADResponse(BaseModel, Mapping):
 
         return self.model_dump()
 
+    @classmethod
+    def from_legacy(cls: type[_ADResponseT], payload: Mapping[str, Any]) -> _ADResponseT:
+        """Wrap a legacy response ``Mapping`` into a typed model losslessly.
+
+        Unknown keys are preserved (``extra='allow'``), so adapting an existing
+        payload and calling :meth:`to_dict` round-trips to the original data.
+        """
+
+        return cls.model_validate(dict(payload))
+
 
 class ADOperationResponse(ADResponse):
     """Typed envelope for AD mutation operations.
@@ -124,6 +136,16 @@ class ADSearchResponse(BaseModel, Sequence):
         """Return a plain, JSON-serializable ``list[dict]`` of the entries."""
 
         return [entry.to_dict() for entry in self.entries]
+
+    @classmethod
+    def from_legacy(cls, payloads: Sequence[Mapping[str, Any]]) -> "ADSearchResponse":
+        """Wrap a legacy ``list[dict]`` search result into a typed model.
+
+        Each element is wrapped in an :class:`ADEntry` without dropping keys, so
+        :meth:`to_list` round-trips to the original list of dictionaries.
+        """
+
+        return cls(entries=[ADEntry.from_legacy(payload) for payload in payloads])
 
 
 __all__: list[str] = [

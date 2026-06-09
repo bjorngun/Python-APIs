@@ -57,6 +57,71 @@ AD_ERROR_CODES: Final[tuple[str, ...]] = (
 )
 
 
+# Maps ldap3 exception / ``pydantic`` error class names to canonical codes. Keyed
+# by class name (rather than imported types) so the mapping is robust to ldap3's
+# large, dynamically generated exception hierarchy without importing every class.
+# Lookup walks the exception's MRO, so subclasses resolve to their nearest mapped
+# ancestor. Names not present here fall through to :data:`AD_UNKNOWN`.
+_EXCEPTION_NAME_TO_CODE: Final[dict[str, str]] = {
+    # Not found
+    "LDAPNoSuchObjectResult": AD_NOT_FOUND,
+    "LDAPNoSuchAttributeResult": AD_NOT_FOUND,
+    # Validation / constraint / schema
+    "ValidationError": AD_VALIDATION_ERROR,
+    "LDAPConstraintViolationResult": AD_VALIDATION_ERROR,
+    "LDAPInvalidAttributeSyntaxResult": AD_VALIDATION_ERROR,
+    "LDAPInvalidDNSyntaxResult": AD_VALIDATION_ERROR,
+    "LDAPNamingViolationResult": AD_VALIDATION_ERROR,
+    "LDAPObjectClassViolationResult": AD_VALIDATION_ERROR,
+    "LDAPUndefinedAttributeTypeResult": AD_VALIDATION_ERROR,
+    "LDAPInvalidValueError": AD_VALIDATION_ERROR,
+    "LDAPAttributeError": AD_VALIDATION_ERROR,
+    # Authentication / bind
+    "LDAPBindError": AD_AUTH_ERROR,
+    "LDAPInvalidCredentialsResult": AD_AUTH_ERROR,
+    "LDAPInappropriateAuthenticationResult": AD_AUTH_ERROR,
+    "LDAPAuthMethodNotSupportedResult": AD_AUTH_ERROR,
+    "LDAPStrongerAuthRequiredResult": AD_AUTH_ERROR,
+    # Permission / authorization
+    "LDAPInsufficientAccessRightsResult": AD_PERMISSION_DENIED,
+    "LDAPAuthorizationDeniedResult": AD_PERMISSION_DENIED,
+    "LDAPConfidentialityRequiredResult": AD_PERMISSION_DENIED,
+    "LDAPUnwillingToPerformResult": AD_PERMISSION_DENIED,
+    # Conflict / already exists
+    "LDAPEntryAlreadyExistsResult": AD_CONFLICT,
+    "LDAPAttributeOrValueExistsResult": AD_CONFLICT,
+    # Timeout
+    "LDAPTimeLimitExceededResult": AD_TIMEOUT,
+    "LDAPResponseTimeoutError": AD_TIMEOUT,
+    # Connection / transport / session
+    "LDAPCommunicationError": AD_CONNECTION_ERROR,
+    "LDAPSessionTerminatedByServerError": AD_CONNECTION_ERROR,
+    "LDAPSocketOpenError": AD_CONNECTION_ERROR,
+    "LDAPSocketSendError": AD_CONNECTION_ERROR,
+    "LDAPSocketReceiveError": AD_CONNECTION_ERROR,
+    "LDAPSocketCloseError": AD_CONNECTION_ERROR,
+    "LDAPServerPoolExhaustedError": AD_CONNECTION_ERROR,
+}
+
+
+def map_exception_to_error_code(exception: BaseException | None) -> str:
+    """Map an exception to a canonical AD error code.
+
+    Resolves ldap3 exceptions and :class:`pydantic.ValidationError` to a stable
+    code by walking the exception's MRO and matching class names against the
+    documented mapping table. Any unmapped or ``None`` exception resolves
+    deterministically to :data:`AD_UNKNOWN`.
+    """
+
+    if exception is None:
+        return AD_UNKNOWN
+    for klass in type(exception).__mro__:
+        code = _EXCEPTION_NAME_TO_CODE.get(klass.__name__)
+        if code is not None:
+            return code
+    return AD_UNKNOWN
+
+
 __all__ = [
     "AD_NOT_FOUND",
     "AD_VALIDATION_ERROR",
@@ -67,4 +132,5 @@ __all__ = [
     "AD_CONFLICT",
     "AD_UNKNOWN",
     "AD_ERROR_CODES",
+    "map_exception_to_error_code",
 ]

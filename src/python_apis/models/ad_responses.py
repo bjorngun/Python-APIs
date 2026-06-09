@@ -13,10 +13,10 @@ Stage N scope note:
     separately (issue #19).
 """
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 _ADResponseT = TypeVar("_ADResponseT", bound="ADResponse")
 
@@ -35,6 +35,11 @@ class ADResponse(BaseModel, Mapping):
 
     model_config = ConfigDict(extra="allow")
 
+    # Optional default-factory captured from a legacy ``defaultdict`` source so
+    # missing-key access can preserve the original default (for example the
+    # empty-string default produced by ``ADConnection.get`` on no match).
+    _missing_default_factory: Callable[[], Any] | None = PrivateAttr(default=None)
+
     def _mapping_keys(self) -> list[str]:
         """Return the ordered key surface (declared fields then extras)."""
 
@@ -44,13 +49,21 @@ class ADResponse(BaseModel, Mapping):
         return keys
 
     def __getitem__(self, key: str) -> Any:
-        """Return the value for ``key`` using legacy dictionary semantics."""
+        """Return the value for ``key`` using legacy dictionary semantics.
+
+        If this response was adapted from a ``defaultdict`` (for example the
+        no-result return of ``ADConnection.get``), missing keys resolve to the
+        original default instead of raising ``KeyError``.
+        """
 
         if key in list(type(self).model_fields.keys()):
             return getattr(self, key)
         extra = self.model_extra or {}
         if key in extra:
             return extra[key]
+        default_factory = self._missing_default_factory
+        if default_factory is not None:
+            return default_factory()  # pylint: disable=not-callable
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:  # type: ignore[override]
@@ -79,9 +92,19 @@ class ADResponse(BaseModel, Mapping):
 
         Unknown keys are preserved (``extra='allow'``), so adapting an existing
         payload and calling :meth:`to_dict` round-trips to the original data.
+
+        If ``payload`` is a ``defaultdict`` (or any mapping exposing a
+        ``default_factory``), that factory is retained so missing-key access on
+        the resulting model matches the legacy default behavior.
         """
 
-        return cls.model_validate(dict(payload))
+        instance = cls.model_validate(dict(payload))
+        # Accessing the instance's own private attribute is safe here; pylint
+        # flags same-class private access through a non-``self`` reference.
+        instance._missing_default_factory = getattr(  # pylint: disable=protected-access
+            payload, "default_factory", None
+        )
+        return instance
 
 
 class ADOperationResponse(ADResponse):
@@ -90,10 +113,14 @@ class ADOperationResponse(ADResponse):
     Mirrors the legacy mutation payload ``{'result': ..., 'success': ...}`` while
     exposing ``success`` and ``result`` as typed attributes. Both remain
     available through dictionary access for legacy consumers.
+
+    ``result`` is intentionally typed broadly (``Any``) because existing AD
+    service paths return either the LDAP result mapping on success or a string
+    error message on failure (for example ``{'success': False, 'result': str(e)}``).
     """
 
     success: bool
-    result: dict[str, Any] = Field(default_factory=dict)
+    result: Any = None
 
 
 class ADEntry(ADResponse):

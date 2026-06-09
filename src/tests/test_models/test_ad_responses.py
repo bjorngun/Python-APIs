@@ -6,6 +6,7 @@ preserve legacy dictionary access and JSON serializability.
 
 import json
 import unittest
+from collections import defaultdict
 
 from python_apis.models import (
     ADEntry,
@@ -58,6 +59,15 @@ class TestADOperationResponse(unittest.TestCase):
         payload = json.loads(self.response.model_dump_json())
         self.assertEqual(payload, self.legacy)
 
+    def test_string_result_is_preserved(self):
+        # AD service error paths return {'success': False, 'result': str(e)}.
+        legacy = {"success": False, "result": "LDAP error"}
+        response = ADOperationResponse.from_legacy(legacy)
+
+        self.assertEqual(response.result, "LDAP error")
+        self.assertEqual(response["result"], "LDAP error")
+        self.assertEqual(response.to_dict(), legacy)
+
 
 class TestADEntry(unittest.TestCase):
     """Validate the single-object read model contract."""
@@ -78,6 +88,15 @@ class TestADEntry(unittest.TestCase):
     def test_missing_key_raises(self):
         with self.assertRaises(KeyError):
             _ = self.entry["does_not_exist"]
+
+    def test_preserves_defaultdict_no_result_behavior(self):
+        # ADConnection.get() returns defaultdict(lambda: '') on no match;
+        # missing-key indexing must keep returning the legacy empty string.
+        empty_get = defaultdict(lambda: "")
+        entry = ADEntry.from_legacy(empty_get)
+
+        self.assertEqual(entry["cn"], "")
+        self.assertEqual(entry["anything"], "")
 
     def test_lossless_round_trip(self):
         self.assertEqual(self.entry.to_dict(), self.legacy)

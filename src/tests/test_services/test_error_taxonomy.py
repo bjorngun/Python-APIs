@@ -144,6 +144,37 @@ class TestMapLDAPResultToErrorCode(unittest.TestCase):
         self.assertEqual(map_ldap_result_to_error_code("denied"), AD_UNKNOWN)
         self.assertEqual(map_ldap_result_to_error_code(None), AD_UNKNOWN)
 
+    def test_aggregate_partial_failure_preserves_subop_code(self):
+        # create_user partial-failure payloads carry no top-level "result" key.
+        self.assertEqual(
+            map_ldap_result_to_error_code(
+                {"create": 0, "password": 49}
+            ),
+            AD_AUTH_ERROR,
+        )
+        self.assertEqual(
+            map_ldap_result_to_error_code(
+                {"create": 0, "enable": 50}
+            ),
+            AD_PERMISSION_DENIED,
+        )
+
+    def test_aggregate_with_nested_result_mapping(self):
+        self.assertEqual(
+            map_ldap_result_to_error_code(
+                {"create": {"result": 0}, "password": {"result": 53}}
+            ),
+            AD_PERMISSION_DENIED,
+        )
+
+    def test_aggregate_without_classifiable_subop_resolves_to_unknown(self):
+        self.assertEqual(
+            map_ldap_result_to_error_code(
+                {"create": "ok", "password": "invalidCredentials"}
+            ),
+            AD_UNKNOWN,
+        )
+
 
 class TestResolveErrorCode(unittest.TestCase):
     """Validate the unified resolver precedence and fallback rules."""
@@ -227,6 +258,19 @@ class TestServiceIntegration(unittest.TestCase):
         )
 
         self.assertEqual(result["error_code"], AD_CONFLICT)
+
+    def test_partial_failure_aggregate_surfaces_subop_code(self):
+        # Mirrors create_user's partial-failure payload (add ok, sub-op failed).
+        result = finalize_ad_write_response(
+            {
+                "success": False,
+                "result": {"create": 0, "password": 49},
+                "dn": "CN=x,OU=y",
+            },
+            effective_mode="strict",
+        )
+
+        self.assertEqual(result["error_code"], AD_AUTH_ERROR)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """Normalized AD error taxonomy and mapping utilities (ADR 0001, Stage N).
 
 This module defines a small, stable set of canonical error codes for Active
-Directory operations and (in later tasks) utilities that map ldap3 exceptions,
+Directory operations together with utilities that map ldap3 exceptions,
 ``pydantic`` validation errors, and raw LDAP result states onto those codes.
 
 The canonical codes are intentionally transport-agnostic and machine-routable so
@@ -23,9 +23,9 @@ Code                        Meaning
                             insufficientAccessRights).
 ``AD_CONNECTION_ERROR``     Transport/session failure (e.g. communication or
                             session terminated by server).
-``AD_TIMEOUT``             Operation exceeded a time limit / socket timeout.
-``AD_CONFLICT``            Conflicting state (e.g. entryAlreadyExists).
-``AD_UNKNOWN``             Deterministic fallback for any unmapped failure.
+``AD_TIMEOUT``              Operation exceeded a time limit / socket timeout.
+``AD_CONFLICT``             Conflicting state (e.g. entryAlreadyExists).
+``AD_UNKNOWN``              Deterministic fallback for any unmapped failure.
 ==========================  =================================================
 
 Any exception or non-success result state that is not explicitly mapped resolves
@@ -156,32 +156,54 @@ _LDAP_RESULT_CODE_TO_CODE: Final[dict[int, str]] = {
 }
 
 
+def _coerce_ldap_result_code(result: object) -> int | None:
+    """Extract a numeric LDAP result code from a raw code or result mapping.
+
+    Returns the integer code when ``result`` is a plain ``int`` or an ldap3
+    result mapping exposing an integer ``result`` key, otherwise ``None``.
+    ``bool`` is rejected because it is a subclass of ``int``.
+    """
+
+    if isinstance(result, bool):
+        return None
+    if isinstance(result, int):
+        return result
+    if isinstance(result, Mapping):
+        raw = result.get("result")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return raw
+    return None
+
+
 def map_ldap_result_to_error_code(result: object) -> str | None:
     """Map an LDAP result state to a canonical AD error code.
 
     Accepts either a raw integer result code or an ldap3 result mapping (which
     exposes the numeric code under a ``result`` key). A success code (``0``)
-    returns ``None`` (no error). Any unrecognized non-zero result state resolves
-    deterministically to :data:`AD_UNKNOWN`. Inputs that carry no usable result
-    code also resolve to :data:`AD_UNKNOWN`.
+    returns ``None`` (no error). Aggregate sub-operation mappings (for example
+    the ``{'create': ..., 'password': ...}`` payloads produced by partial
+    ``create_user`` failures) carry no top-level ``result`` key and are
+    inspected recursively so the first failing sub-operation's canonical code is
+    preserved. Any unrecognized non-zero result state, and any input that
+    carries no usable result code, resolves deterministically to
+    :data:`AD_UNKNOWN`.
     """
 
-    code: int | None = None
-    if isinstance(result, bool):
-        # Guard against bool (a subclass of int) being treated as 0/1 codes.
-        code = None
-    elif isinstance(result, int):
-        code = result
-    elif isinstance(result, Mapping):
-        raw = result.get("result")
-        if isinstance(raw, int) and not isinstance(raw, bool):
-            code = raw
+    code = _coerce_ldap_result_code(result)
+    if code is not None:
+        if code == 0:
+            return None
+        return _LDAP_RESULT_CODE_TO_CODE.get(code, AD_UNKNOWN)
 
-    if code is None:
-        return AD_UNKNOWN
-    if code == 0:
-        return None
-    return _LDAP_RESULT_CODE_TO_CODE.get(code, AD_UNKNOWN)
+    # No direct code: inspect aggregate sub-operation results and surface the
+    # first specific (non-fallback) classification found, if any.
+    if isinstance(result, Mapping):
+        for value in result.values():
+            nested = map_ldap_result_to_error_code(value)
+            if nested is not None and nested != AD_UNKNOWN:
+                return nested
+
+    return AD_UNKNOWN
 
 
 def resolve_error_code(

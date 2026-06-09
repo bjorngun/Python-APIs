@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   serialization (additive, non-breaking; exported from `python_apis.models`)
 - Contract tests pinning AD response model field names, types, dict-compatibility, and JSON
   serializability
+- AD operation envelope (`ADOperationEnvelope`) for service write operations with
+  compatibility-mode-driven legacy key mirroring (`success`/`result`/`message`), modern fields
+  (`operation_kind`, `ldap_result`, `exception_type`/`exception_message`, `request_context`), and
+  forward-compatible defaults (`error_code`, `retry_count`, `retried`); wired into
+  `ADUserService`, `ADGroupService`, and `ADOrganizationalUnitService` write ops with optional
+  per-call `compatibility_mode` overrides (additive, non-breaking; `legacy` returns the historic
+  dict unchanged, `mixed` mirrors legacy keys, `strict` omits them)
+- Service-layer envelope contract tests across user/group/OU write operations
+- Migration guide for the AD operation envelope (`docs/migration/ad-operation-envelope.md`)
 
 ### Fixed
 

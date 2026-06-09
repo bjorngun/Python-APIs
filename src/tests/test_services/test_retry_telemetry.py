@@ -1,6 +1,7 @@
 """Tests for AD retry telemetry capture and reporting (issue #21)."""
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from ldap3.core.exceptions import (
@@ -15,6 +16,7 @@ from python_apis.apis.ad_api import (
     RetryTelemetry,
 )
 from python_apis.models.ad_responses import ADOperationEnvelope
+from python_apis.services.ad_user_service import ADUserService
 from python_apis.services.compatibility_mode import (
     finalize_ad_read_response,
     finalize_ad_write_response,
@@ -104,6 +106,17 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         self.assertTrue(telemetry.retried)
         self.assertTrue(telemetry.would_retry)
         self.assertFalse(telemetry.recovered)
+
+    def test_telemetry_policy_is_isolated_from_global(self):
+        conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+
+        conn.search('(objectClass=user)', ['cn'])
+
+        telemetry = conn.last_retry_telemetry
+        telemetry.policy['strategy'] = 'mutated'
+        self.assertEqual(AD_READ_RETRY_POLICY['strategy'], 'rebind_once')
+
 
 
 class TestEnvelopeRetryFields(unittest.TestCase):
@@ -252,6 +265,71 @@ class TestReadResponseRetryIntegration(unittest.TestCase):
 
         self.assertFalse(payload['success'])
         self.assertEqual(payload['exception_type'], 'LDAPCommunicationError')
+
+
+class TestLocalValidationTelemetrySuppression(unittest.TestCase):
+    """Local validation failures must not attribute stale retry telemetry."""
+
+    def setUp(self):
+        env_vars = {
+            'ADUSER_DB_SERVER': 'test_server',
+            'ADUSER_DB_NAME': 'test_db',
+            'ADUSER_SQL_DRIVER': 'test_driver',
+            'LDAP_SERVER_LIST': 'ldap://server1 ldap://server2',
+            'SEARCH_BASE': 'dc=example,dc=com',
+        }
+        patcher_getenv = patch('os.getenv', side_effect=lambda k, d=None: env_vars.get(k, d))
+        patcher_getenv.start()
+        self.addCleanup(patcher_getenv.stop)
+
+        self.mock_ad_connection = MagicMock()
+        # Simulate a previous retried write leaving stale telemetry on the connection.
+        self.mock_ad_connection.last_retry_telemetry = RetryTelemetry(
+            operation_kind='write',
+            retry_count=1,
+            retried=True,
+            would_retry=True,
+            recovered=True,
+            policy=AD_WRITE_RETRY_POLICY,
+        )
+        self.mock_sql_connection = MagicMock()
+
+        patcher_ad = patch(
+            'python_apis.services.ad_user_service.ADConnection',
+            return_value=self.mock_ad_connection,
+        )
+        patcher_sql = patch(
+            'python_apis.services.ad_user_service.SQLConnection',
+            return_value=self.mock_sql_connection,
+        )
+        patcher_ad.start()
+        patcher_sql.start()
+        self.addCleanup(patcher_ad.stop)
+        self.addCleanup(patcher_sql.stop)
+
+        self.service = ADUserService()
+
+    def test_rename_missing_dn_does_not_report_stale_retry(self):
+        user = SimpleNamespace(distinguishedName=None)
+
+        payload = self.service.rename_user_cn(user, 'NewName', compatibility_mode='mixed')
+
+        self.assertFalse(payload['success'])
+        self.assertEqual(payload['retry_count'], 0)
+        self.assertFalse(payload['did_retry'])
+        self.assertIsNone(payload['retry_policy'])
+        self.mock_ad_connection.rename_dn.assert_not_called()
+
+    def test_rename_invalid_dn_does_not_report_stale_retry(self):
+        user = SimpleNamespace(distinguishedName='CN=NoComma')
+
+        payload = self.service.rename_user_cn(user, 'NewName', compatibility_mode='strict')
+
+        self.assertFalse(payload['success'])
+        self.assertEqual(payload['retry_count'], 0)
+        self.assertFalse(payload['did_retry'])
+        self.assertIsNone(payload['retry_policy'])
+        self.mock_ad_connection.rename_dn.assert_not_called()
 
 
 if __name__ == '__main__':

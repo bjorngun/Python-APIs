@@ -151,7 +151,7 @@ def _auto_reconnect(operation_kind: str = "write"):
                     retried=retried,
                     would_retry=would_retry,
                     recovered=recovered,
-                    policy=policy,
+                    policy=dict(policy),
                 )
 
         return wrapper

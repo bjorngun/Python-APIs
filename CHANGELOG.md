@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   dict unchanged, `mixed` mirrors legacy keys, `strict` omits them)
 - Service-layer envelope contract tests across user/group/OU write operations
 - Migration guide for the AD operation envelope (`docs/migration/ad-operation-envelope.md`)
+- Normalized AD error taxonomy (`python_apis.services.error_taxonomy`) with eight canonical,
+  transport-agnostic error codes (`AD_NOT_FOUND`, `AD_VALIDATION_ERROR`, `AD_AUTH_ERROR`,
+  `AD_PERMISSION_DENIED`, `AD_CONNECTION_ERROR`, `AD_TIMEOUT`, `AD_CONFLICT`, `AD_UNKNOWN`) and
+  pure mapping utilities (`map_exception_to_error_code`, `map_ldap_result_to_error_code`,
+  `resolve_error_code`) that classify ldap3/`pydantic` exceptions and LDAP result states, with a
+  deterministic `AD_UNKNOWN` fallback
+- Automatic population of `ADOperationEnvelope.error_code` for AD write operations in `mixed`/`strict`
+  compatibility modes (`legacy` responses remain byte-for-byte unchanged; successful ops carry
+  `error_code = None`)
+- Unit tests for the AD error taxonomy and its service-layer integration
 
 ### Fixed
 

@@ -571,10 +571,13 @@ class ADUserService:
                 effective_mode=effective_mode,
             )
 
-        # Optional: set password then enable
+        # Optional: set password then enable. Internal sub-operations are pinned
+        # to legacy mode so their `result`/`success` keys are always present for
+        # the partial-failure aggregation below, regardless of the effective mode.
         if set_password:
             pw_resp = self.set_password(
-                dn, set_password, must_change_at_next_logon=must_change_password
+                dn, set_password, must_change_at_next_logon=must_change_password,
+                compatibility_mode='legacy',
             )
             if not pw_resp.get('success'):
                 self.logger.warning("Set password failed for %s: %s", dn, pw_resp.get('result'))
@@ -592,7 +595,7 @@ class ADUserService:
                 )
 
         if enable_after_create:
-            en_resp = self.enable_user(dn)
+            en_resp = self.enable_user(dn, compatibility_mode='legacy')
             if not en_resp.get('success'):
                 self.logger.warning("Enable user failed for %s: %s", dn, en_resp.get('result'))
                 return self._finalize_write(

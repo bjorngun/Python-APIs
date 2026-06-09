@@ -61,7 +61,7 @@ def finalize_ad_write_response(
     extras = {
         key: value
         for key, value in legacy_response.items()
-        if key not in ("success", "result")
+        if key not in ("success", "result", "message")
     }
     success = (
         False if exception is not None else bool(legacy_response.get("success"))

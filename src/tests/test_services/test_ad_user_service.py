@@ -328,6 +328,50 @@ class TestADUserService(unittest.TestCase):
             },
         )
 
+    def test_create_user_password_failure_strict_default_preserves_details(self):
+        # Regression: even when the service default mode is `strict` (which omits
+        # the legacy `result` key), the internal set_password sub-operation must
+        # still surface the LDAP failure details in the aggregated payload.
+        service = ADUserService(compatibility_mode='strict')
+        self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
+        self.mock_ad_connection.set_password.return_value = {'success': False, 'result': 'pw err'}
+
+        result = service.create_user(
+            'John Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jdoe'},
+            set_password='Sup3rSecure!',
+        )
+
+        self.assertFalse(result['success'])
+        self.assertEqual(
+            result['ldap_result'],
+            {'create': 'created', 'password': 'pw err'},
+        )
+
+    def test_create_user_enable_failure_strict_default_preserves_details(self):
+        # Regression: a `strict` service default must not drop the enable
+        # sub-operation's LDAP failure details from the aggregated payload.
+        service = ADUserService(compatibility_mode='strict')
+        self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
+        self.mock_ad_connection.enable_user.return_value = {
+            'success': False,
+            'result': 'enable err',
+        }
+
+        result = service.create_user(
+            'John Doe',
+            'OU=Users,DC=example,DC=com',
+            {'sAMAccountName': 'jdoe'},
+            enable_after_create=True,
+        )
+
+        self.assertFalse(result['success'])
+        self.assertEqual(
+            result['ldap_result'],
+            {'create': 'created', 'enable': 'enable err'},
+        )
+
     def test_create_user_unexpected_option(self):
         service = ADUserService()
 

@@ -14,9 +14,11 @@ from pydantic import ValidationError
 from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADUser
-from python_apis.models import ADOperationEnvelope
 from python_apis.schemas import ADUserSchema
-from python_apis.services.compatibility_mode import resolve_service_compatibility_mode
+from python_apis.services.compatibility_mode import (
+    finalize_ad_write_response,
+    resolve_service_compatibility_mode,
+)
 
 class ADUserService:
     """Service class for interacting with Active Directory users.
@@ -76,37 +78,16 @@ class ADUserService:
     ) -> dict[str, Any]:
         """Shape a write-operation response for the effective compatibility mode.
 
-        In ``legacy`` mode the original response dict is returned unchanged to
-        preserve pre-modernization behavior (non-breaking default). In ``mixed``
-        and ``strict`` modes an :class:`ADOperationEnvelope` is emitted: ``mixed``
-        mirrors the legacy keys (``success``, ``result``, ``message``) while
-        ``strict`` omits them. Operation-specific extras (for example ``dn`` or
-        ``changes``) are preserved as top-level keys and captured in
-        ``request_context``.
+        Thin wrapper over
+        :func:`python_apis.services.compatibility_mode.finalize_ad_write_response`
+        so all AD services share one envelope/legacy-mirroring implementation.
         """
 
-        if effective_mode == "legacy":
-            return legacy_response
-
-        extras = {
-            key: value
-            for key, value in legacy_response.items()
-            if key not in ("success", "result")
-        }
-        success = (
-            False if exception is not None else bool(legacy_response.get("success"))
-        )
-        envelope = ADOperationEnvelope.from_operation(
-            operation_kind="write",
-            success=success,
-            ldap_result=legacy_response.get("result"),
+        return finalize_ad_write_response(
+            legacy_response,
+            effective_mode=effective_mode,
             exception=exception,
-            request_context={**extras, "compatibility_mode": effective_mode},
         )
-        payload = envelope.to_response(effective_mode)
-        for key, value in extras.items():
-            payload.setdefault(key, value)
-        return payload
 
     def get_compatibility_mode(self, compatibility_mode: str | None = None) -> dict[str, str]:
         """Return service default and effective compatibility mode for this context."""

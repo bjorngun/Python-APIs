@@ -32,6 +32,7 @@ Any exception or non-success result state that is not explicitly mapped resolves
 to :data:`AD_UNKNOWN`, so the taxonomy is always total over failure inputs.
 """
 
+from collections.abc import Mapping
 from typing import Final
 
 AD_NOT_FOUND: Final = "AD_NOT_FOUND"
@@ -122,6 +123,67 @@ def map_exception_to_error_code(exception: BaseException | None) -> str:
     return AD_UNKNOWN
 
 
+# Maps standard LDAP numeric result codes (RFC 4511 + common extensions) to
+# canonical codes. ``0`` (success) is intentionally absent; success yields no
+# error code. Non-zero result codes not listed here resolve to
+# :data:`AD_UNKNOWN`.
+_LDAP_RESULT_CODE_TO_CODE: Final[dict[int, str]] = {
+    1: AD_UNKNOWN,            # operationsError
+    2: AD_VALIDATION_ERROR,   # protocolError
+    3: AD_TIMEOUT,            # timeLimitExceeded
+    4: AD_VALIDATION_ERROR,   # sizeLimitExceeded
+    7: AD_AUTH_ERROR,         # authMethodNotSupported
+    8: AD_AUTH_ERROR,         # strongerAuthRequired
+    11: AD_PERMISSION_DENIED,  # adminLimitExceeded
+    13: AD_PERMISSION_DENIED,  # confidentialityRequired
+    16: AD_NOT_FOUND,         # noSuchAttribute
+    17: AD_VALIDATION_ERROR,  # undefinedAttributeType
+    18: AD_VALIDATION_ERROR,  # inappropriateMatching
+    19: AD_VALIDATION_ERROR,  # constraintViolation
+    20: AD_CONFLICT,          # attributeOrValueExists
+    21: AD_VALIDATION_ERROR,  # invalidAttributeSyntax
+    32: AD_NOT_FOUND,         # noSuchObject
+    34: AD_VALIDATION_ERROR,  # invalidDNSyntax
+    48: AD_AUTH_ERROR,        # inappropriateAuthentication
+    49: AD_AUTH_ERROR,        # invalidCredentials
+    50: AD_PERMISSION_DENIED,  # insufficientAccessRights
+    51: AD_CONNECTION_ERROR,  # busy
+    52: AD_CONNECTION_ERROR,  # unavailable
+    53: AD_PERMISSION_DENIED,  # unwillingToPerform
+    64: AD_VALIDATION_ERROR,  # namingViolation
+    65: AD_VALIDATION_ERROR,  # objectClassViolation
+    68: AD_CONFLICT,          # entryAlreadyExists
+}
+
+
+def map_ldap_result_to_error_code(result: object) -> str | None:
+    """Map an LDAP result state to a canonical AD error code.
+
+    Accepts either a raw integer result code or an ldap3 result mapping (which
+    exposes the numeric code under a ``result`` key). A success code (``0``)
+    returns ``None`` (no error). Any unrecognized non-zero result state resolves
+    deterministically to :data:`AD_UNKNOWN`. Inputs that carry no usable result
+    code also resolve to :data:`AD_UNKNOWN`.
+    """
+
+    code: int | None = None
+    if isinstance(result, bool):
+        # Guard against bool (a subclass of int) being treated as 0/1 codes.
+        code = None
+    elif isinstance(result, int):
+        code = result
+    elif isinstance(result, Mapping):
+        raw = result.get("result")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            code = raw
+
+    if code is None:
+        return AD_UNKNOWN
+    if code == 0:
+        return None
+    return _LDAP_RESULT_CODE_TO_CODE.get(code, AD_UNKNOWN)
+
+
 __all__ = [
     "AD_NOT_FOUND",
     "AD_VALIDATION_ERROR",
@@ -133,4 +195,5 @@ __all__ = [
     "AD_UNKNOWN",
     "AD_ERROR_CODES",
     "map_exception_to_error_code",
+    "map_ldap_result_to_error_code",
 ]

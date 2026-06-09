@@ -168,6 +168,77 @@ class ADOperationEnvelope(ADResponse):
 
         return self.exception_message
 
+    @classmethod
+    def from_operation(  # pylint: disable=too-many-arguments
+        cls,
+        *,
+        operation_kind: Literal["read", "write"],
+        success: bool | None = None,
+        ldap_result: Any = None,
+        exception: BaseException | None = None,
+        request_context: dict[str, Any] | None = None,
+        retry_count: int = 0,
+        retried: bool = False,
+        error_code: str | None = None,
+    ) -> "ADOperationEnvelope":
+        """Build an envelope from an AD operation outcome.
+
+        Captures the structured result of a single AD operation. When
+        ``exception`` is provided, ``exception_type`` and ``exception_message``
+        are derived from it and ``success`` defaults to ``False``; otherwise
+        ``success`` defaults to ``True`` unless explicitly supplied.
+
+        ``retry_count``/``retried``/``error_code`` are accepted now for forward
+        compatibility with retry telemetry (issue #21) and the normalized error
+        taxonomy (issue #20); both currently default to safe values.
+        """
+
+        exception_type: str | None = None
+        exception_message: str | None = None
+        if exception is not None:
+            exception_type = type(exception).__name__
+            exception_message = str(exception)
+
+        if success is None:
+            success = exception is None
+
+        return cls(
+            success=success,
+            operation_kind=operation_kind,
+            ldap_result=ldap_result,
+            exception_type=exception_type,
+            exception_message=exception_message,
+            request_context=request_context or {},
+            retry_count=retry_count,
+            retried=retried,
+            error_code=error_code,
+        )
+
+    def to_response(self, mode: str | None = None) -> dict[str, Any]:
+        """Return the envelope as a dict shaped for the given compatibility mode.
+
+        - ``legacy``/``mixed``: include legacy mirror keys (``success``,
+          ``result``, ``message``) alongside modern fields.
+        - ``strict``: omit legacy mirror keys and return only the modern
+          envelope fields.
+
+        Any unknown or empty ``mode`` resolves to ``legacy`` via
+        :func:`resolve_ad_compatibility_mode`, preserving a non-breaking default.
+        """
+
+        # Imported lazily to avoid a circular import: ``models`` is imported by
+        # the package ``__init__`` before ``apis`` finishes initializing.
+        from python_apis.apis.ad_api import (  # pylint: disable=import-outside-toplevel
+            resolve_ad_compatibility_mode,
+        )
+
+        resolved = resolve_ad_compatibility_mode(per_call_mode=mode)
+        payload = self.to_dict()
+        if resolved == "strict":
+            for legacy_key in ("result", "message"):
+                payload.pop(legacy_key, None)
+        return payload
+
 
 class ADEntry(ADResponse):
     """Typed, dict-compatible representation of a single AD object.

@@ -10,6 +10,7 @@ from collections import defaultdict
 
 from python_apis.models import (
     ADEntry,
+    ADOperationEnvelope,
     ADOperationResponse,
     ADResponse,
     ADSearchResponse,
@@ -130,6 +131,117 @@ class TestADSearchResponse(unittest.TestCase):
         empty = ADSearchResponse()
         self.assertEqual(len(empty), 0)
         self.assertEqual(empty.to_list(), [])
+
+
+class TestADOperationEnvelope(unittest.TestCase):
+    """Validate the operation envelope model, builder, and mode-aware output."""
+
+    def test_required_fields_and_defaults(self):
+        envelope = ADOperationEnvelope(success=True, operation_kind="write")
+
+        self.assertIs(envelope.success, True)
+        self.assertEqual(envelope.operation_kind, "write")
+        self.assertIsNone(envelope.ldap_result)
+        self.assertIsNone(envelope.exception_type)
+        self.assertIsNone(envelope.exception_message)
+        self.assertEqual(envelope.request_context, {})
+        self.assertEqual(envelope.retry_count, 0)
+        self.assertIs(envelope.retried, False)
+        self.assertIsNone(envelope.error_code)
+
+    def test_legacy_mirrors_match_modern_fields(self):
+        envelope = ADOperationEnvelope(
+            success=True,
+            operation_kind="write",
+            ldap_result={"description": "success"},
+            exception_message="none",
+        )
+
+        # Mirrors readable via attribute and Mapping access.
+        self.assertEqual(envelope.result, envelope.ldap_result)
+        self.assertEqual(envelope.message, envelope.exception_message)
+        self.assertEqual(envelope["result"], envelope.ldap_result)
+        self.assertEqual(envelope["message"], envelope.exception_message)
+
+    def test_json_serializable(self):
+        envelope = ADOperationEnvelope(
+            success=True,
+            operation_kind="write",
+            ldap_result={"description": "success"},
+        )
+        payload = json.loads(envelope.model_dump_json())
+
+        self.assertEqual(payload["result"], {"description": "success"})
+        self.assertEqual(payload["ldap_result"], {"description": "success"})
+
+    def test_from_operation_success(self):
+        envelope = ADOperationEnvelope.from_operation(
+            operation_kind="write",
+            ldap_result={"description": "success"},
+            request_context={"dn": "CN=x"},
+        )
+
+        self.assertIs(envelope.success, True)
+        self.assertIsNone(envelope.exception_type)
+        self.assertEqual(envelope.ldap_result, {"description": "success"})
+        self.assertEqual(envelope.request_context, {"dn": "CN=x"})
+
+    def test_from_operation_exception_capture(self):
+        envelope = ADOperationEnvelope.from_operation(
+            operation_kind="write",
+            exception=ValueError("boom"),
+        )
+
+        self.assertIs(envelope.success, False)
+        self.assertEqual(envelope.exception_type, "ValueError")
+        self.assertEqual(envelope.exception_message, "boom")
+        self.assertEqual(envelope.message, "boom")
+
+    def test_from_operation_explicit_success_overrides_default(self):
+        envelope = ADOperationEnvelope.from_operation(
+            operation_kind="write",
+            success=False,
+            ldap_result="partial",
+        )
+
+        self.assertIs(envelope.success, False)
+
+    def test_to_response_legacy_includes_mirrors(self):
+        envelope = ADOperationEnvelope.from_operation(
+            operation_kind="write",
+            ldap_result={"description": "success"},
+        )
+        payload = envelope.to_response("legacy")
+
+        self.assertIn("result", payload)
+        self.assertIn("message", payload)
+        self.assertEqual(payload["result"], payload["ldap_result"])
+
+    def test_to_response_mixed_includes_mirrors(self):
+        envelope = ADOperationEnvelope.from_operation(operation_kind="write")
+        payload = envelope.to_response("mixed")
+
+        self.assertIn("result", payload)
+        self.assertIn("message", payload)
+
+    def test_to_response_strict_omits_mirrors(self):
+        envelope = ADOperationEnvelope.from_operation(
+            operation_kind="write",
+            ldap_result={"description": "success"},
+        )
+        payload = envelope.to_response("strict")
+
+        self.assertNotIn("result", payload)
+        self.assertNotIn("message", payload)
+        self.assertIn("ldap_result", payload)
+        self.assertIn("success", payload)
+
+    def test_to_response_unknown_mode_falls_back_to_legacy(self):
+        envelope = ADOperationEnvelope.from_operation(operation_kind="write")
+        payload = envelope.to_response("nonsense")
+
+        self.assertIn("result", payload)
+        self.assertIn("message", payload)
 
 
 if __name__ == "__main__":

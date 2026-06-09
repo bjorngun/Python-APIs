@@ -7,6 +7,13 @@ from python_apis.models.ad_group import ADGroup
 from python_apis.models.ad_user import ADUser
 from python_apis.models.ad_ou import ADOrganizationalUnit
 
+from python_apis.models.ad_responses import (
+    ADResponse,
+    ADOperationResponse,
+    ADEntry,
+    ADSearchResponse,
+)
+
 from python_apis.models.sap_employee import Employee
 
 from python_apis.models.jira_models import JiraComponent, JiraIssue, JiraRequestType
@@ -15,6 +22,11 @@ __all__ = [
     "ADUser",
     "ADGroup",
     "ADOrganizationalUnit",
+
+    "ADResponse",
+    "ADOperationResponse",
+    "ADEntry",
+    "ADSearchResponse",
 
     "Employee",
 

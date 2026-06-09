@@ -14,9 +14,9 @@ Stage N scope note:
 """
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, computed_field
 
 _ADResponseT = TypeVar("_ADResponseT", bound="ADResponse")
 
@@ -41,9 +41,12 @@ class ADResponse(BaseModel, Mapping):
     _missing_default_factory: Callable[[], Any] | None = PrivateAttr(default=None)
 
     def _mapping_keys(self) -> list[str]:
-        """Return the ordered key surface (declared fields then extras)."""
+        """Return the ordered key surface (fields, computed fields, then extras)."""
 
         keys = list(type(self).model_fields.keys())
+        keys.extend(
+            key for key in type(self).model_computed_fields.keys() if key not in keys
+        )
         extra = self.model_extra or {}
         keys.extend(key for key in extra if key not in keys)
         return keys
@@ -57,6 +60,8 @@ class ADResponse(BaseModel, Mapping):
         """
 
         if key in list(type(self).model_fields.keys()):
+            return getattr(self, key)
+        if key in list(type(self).model_computed_fields.keys()):
             return getattr(self, key)
         extra = self.model_extra or {}
         if key in extra:
@@ -123,6 +128,118 @@ class ADOperationResponse(ADResponse):
     result: Any = None
 
 
+class ADOperationEnvelope(ADResponse):
+    """Consistent operation envelope for AD service calls (ADR 0001, Stage N).
+
+    Provides modern, structured metadata for an AD operation while mirroring the
+    legacy top-level keys (``success``, ``result``, ``message``) so existing
+    consumers keep working during the migration. ``result`` mirrors
+    ``ldap_result`` and ``message`` mirrors ``exception_message``; the mirror
+    values never diverge from their modern counterparts.
+
+    Forward-compatible fields are included now with safe defaults so the
+    envelope shape stays stable across the rollout:
+
+    - ``error_code`` is populated by the normalized error taxonomy (issue #20).
+    - ``retry_count`` / ``retried`` are populated by retry telemetry (issue #21).
+    """
+
+    success: bool
+    operation_kind: Literal["read", "write"]
+    ldap_result: Any = None
+    exception_type: str | None = None
+    exception_message: str | None = None
+    request_context: dict[str, Any] = Field(default_factory=dict)
+    retry_count: int = 0
+    retried: bool = False
+    error_code: str | None = None
+
+    @computed_field
+    @property
+    def result(self) -> Any:
+        """Legacy mirror of :attr:`ldap_result`."""
+
+        return self.ldap_result
+
+    @computed_field
+    @property
+    def message(self) -> str | None:
+        """Legacy mirror of :attr:`exception_message`."""
+
+        return self.exception_message
+
+    @classmethod
+    def from_operation(  # pylint: disable=too-many-arguments
+        cls,
+        *,
+        operation_kind: Literal["read", "write"],
+        success: bool | None = None,
+        ldap_result: Any = None,
+        exception: BaseException | None = None,
+        request_context: dict[str, Any] | None = None,
+        retry_count: int = 0,
+        retried: bool = False,
+        error_code: str | None = None,
+    ) -> "ADOperationEnvelope":
+        """Build an envelope from an AD operation outcome.
+
+        Captures the structured result of a single AD operation. When
+        ``exception`` is provided, ``exception_type`` and ``exception_message``
+        are derived from it and ``success`` defaults to ``False``; otherwise
+        ``success`` defaults to ``True`` unless explicitly supplied.
+
+        ``retry_count``/``retried``/``error_code`` are accepted now for forward
+        compatibility with retry telemetry (issue #21) and the normalized error
+        taxonomy (issue #20); both currently default to safe values.
+        """
+
+        exception_type: str | None = None
+        exception_message: str | None = None
+        if exception is not None:
+            exception_type = type(exception).__name__
+            exception_message = str(exception)
+
+        if success is None:
+            success = exception is None
+
+        return cls(
+            success=success,
+            operation_kind=operation_kind,
+            ldap_result=ldap_result,
+            exception_type=exception_type,
+            exception_message=exception_message,
+            request_context=request_context or {},
+            retry_count=retry_count,
+            retried=retried,
+            error_code=error_code,
+        )
+
+    def to_response(self, mode: str | None = None) -> dict[str, Any]:
+        """Return the envelope as a dict shaped for the given compatibility mode.
+
+        - ``legacy``/``mixed``: include legacy mirror keys (``success``,
+          ``result``, ``message``) alongside modern fields.
+        - ``strict``: omit legacy mirror keys and return only the modern
+          envelope fields.
+
+        Any unknown or empty ``mode`` resolves to ``legacy`` via
+        :func:`resolve_ad_compatibility_mode`, preserving a non-breaking default.
+        """
+
+        # Imported lazily to avoid a circular import: ``models`` is imported by
+        # the package ``__init__`` before ``apis`` finishes initializing.
+        from python_apis.apis.ad_api import (  # pylint: disable=import-outside-toplevel
+            resolve_ad_compatibility_mode,
+        )
+
+        resolved = resolve_ad_compatibility_mode(per_call_mode=mode)
+        payload = self.to_dict()
+        if resolved == "strict":
+            for legacy_key in ("result", "message"):
+                payload.pop(legacy_key, None)
+        return payload
+
+
 class ADEntry(ADResponse):
     """Typed, dict-compatible representation of a single AD object.
 
@@ -176,8 +293,10 @@ class ADSearchResponse(BaseModel, Sequence):
 
 
 __all__: list[str] = [
+    # pylint: disable=duplicate-code
     "ADResponse",
     "ADOperationResponse",
+    "ADOperationEnvelope",
     "ADEntry",
     "ADSearchResponse",
 ]

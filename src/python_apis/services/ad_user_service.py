@@ -15,7 +15,10 @@ from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADUser
 from python_apis.schemas import ADUserSchema
-from python_apis.services.compatibility_mode import resolve_service_compatibility_mode
+from python_apis.services.compatibility_mode import (
+    finalize_ad_write_response,
+    resolve_service_compatibility_mode,
+)
 
 class ADUserService:
     """Service class for interacting with Active Directory users.
@@ -64,6 +67,26 @@ class ADUserService:
         return resolve_service_compatibility_mode(
             per_call_mode=compatibility_mode,
             service_mode=self.compatibility_mode,
+        )
+
+    def _finalize_write(
+        self,
+        legacy_response: dict[str, Any],
+        *,
+        effective_mode: str,
+        exception: BaseException | None = None,
+    ) -> dict[str, Any]:
+        """Shape a write-operation response for the effective compatibility mode.
+
+        Thin wrapper over
+        :func:`python_apis.services.compatibility_mode.finalize_ad_write_response`
+        so all AD services share one envelope/legacy-mirroring implementation.
+        """
+
+        return finalize_ad_write_response(
+            legacy_response,
+            effective_mode=effective_mode,
+            exception=exception,
         )
 
     def get_compatibility_mode(self, compatibility_mode: str | None = None) -> dict[str, str]:
@@ -203,69 +226,98 @@ class ADUserService:
                              in ad_users_dict if 'sAMAccountName' in user}
         return sam_account_names
 
-    def enable_user(self, user: ADUser | str) -> dict[str, Any]:
+    def enable_user(
+        self, user: ADUser | str, compatibility_mode: str | None = None
+    ) -> dict[str, Any]:
         """Enable an Active Directory user.
 
         Args:
             user (ADUser | str): The user (or distinguishedName) to enable.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: The result of the enable operation.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
         distinguished_name = (user.distinguishedName
                               if isinstance(user, ADUser)
                               else str(user))
-        return self.ad_connection.enable_user(distinguished_name)
+        response = self.ad_connection.enable_user(distinguished_name)
+        return self._finalize_write(response, effective_mode=effective_mode)
 
-    def disable_user(self, user: ADUser | str) -> dict[str, Any]:
+    def disable_user(
+        self, user: ADUser | str, compatibility_mode: str | None = None
+    ) -> dict[str, Any]:
         """Disable an Active Directory user.
 
         Args:
             user (ADUser | str): The user (or distinguishedName) to disable.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: The result of the disable operation.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
         distinguished_name = (user.distinguishedName
                               if isinstance(user, ADUser)
                               else str(user))
-        return self.ad_connection.disable_user(distinguished_name)
+        response = self.ad_connection.disable_user(distinguished_name)
+        return self._finalize_write(response, effective_mode=effective_mode)
 
-    def add_member(self, user: ADUser, group_dn: str) -> dict[str, Any]:
+    def add_member(
+        self, user: ADUser, group_dn: str, compatibility_mode: str | None = None
+    ) -> dict[str, Any]:
         """Add a user to an Active Directory group.
 
         Args:
             user (ADUser): The user to add.
             group_dn (str): The distinguished name of the group.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: The result of the add operation.
         """
-        return self.ad_connection.add_member(user.distinguishedName, group_dn)
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        response = self.ad_connection.add_member(user.distinguishedName, group_dn)
+        return self._finalize_write(response, effective_mode=effective_mode)
 
-    def remove_member(self, user: ADUser, group_dn: str) -> dict[str, Any]:
+    def remove_member(
+        self, user: ADUser, group_dn: str, compatibility_mode: str | None = None
+    ) -> dict[str, Any]:
         """Remove a user from an Active Directory group.
 
         Args:
             user (ADUser): The user to remove.
             group_dn (str): The distinguished name of the group.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: The result of the remove operation.
         """
-        return self.ad_connection.remove_member(user.distinguishedName, group_dn)
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        response = self.ad_connection.remove_member(user.distinguishedName, group_dn)
+        return self._finalize_write(response, effective_mode=effective_mode)
 
-    def move_user_to_ou(self, user: ADUser, target_ou_dn: str) -> dict[str, Any]:
+    def move_user_to_ou(
+        self, user: ADUser, target_ou_dn: str, compatibility_mode: str | None = None
+    ) -> dict[str, Any]:
         """Move a user to a different OU in Active Directory.
 
         Args:
             user (ADUser): The user to move.
             target_ou_dn (str): Distinguished name for the destination OU.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: Result payload from the move operation including success flag.
         """
 
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
         current_dn = user.distinguishedName
         try:
             response = self.ad_connection.move_entry(str(current_dn), target_ou_dn)
@@ -276,7 +328,11 @@ class ADUserService:
                 target_ou_dn,
                 str(e),
             )
-            return {'success': False, 'result': str(e)}
+            return self._finalize_write(
+                {'success': False, 'result': str(e)},
+                effective_mode=effective_mode,
+                exception=e,
+            )
 
         result = dict(response) if response is not None else {'success': False, 'result': None}
         if not result.get('success'):
@@ -286,7 +342,7 @@ class ADUserService:
                 target_ou_dn,
                 result.get('result'),
             )
-            return result
+            return self._finalize_write(result, effective_mode=effective_mode)
 
         new_dn = self._user_dn(str(user.cn), target_ou_dn)
         setattr(user, 'distinguishedName', new_dn)
@@ -297,9 +353,14 @@ class ADUserService:
             getattr(user, 'sAMAccountName', '<unknown>'),
             target_ou_dn,
         )
-        return result
+        return self._finalize_write(result, effective_mode=effective_mode)
 
-    def modify_user(self, user: ADUser, changes: list[tuple[str, str]]) -> dict[str, Any]:
+    def modify_user(
+        self,
+        user: ADUser,
+        changes: list[tuple[str, str]],
+        compatibility_mode: str | None = None,
+    ) -> dict[str, Any]:
         """Modify attributes of a user in Active Directory.
 
         Args:
@@ -308,6 +369,8 @@ class ADUserService:
                 Each tuple consists of an attribute name and its new value.
                 For example:
                     [('givenName', 'John'), ('sn', 'Doe')]
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: A dictionary containing the result of the modify operation with the
@@ -317,6 +380,7 @@ class ADUserService:
                 - 'changes' (dict[str, str]): A mapping of attribute names to their changes in the
                 format 'old_value -> new_value'.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
         change_affects = {k: f"{getattr(user, k)} -> {v}" for k, v in changes}
         try:
             response = self.ad_connection.modify(user.distinguishedName, changes)
@@ -329,7 +393,11 @@ class ADUserService:
                 change_affects,
                 str(e),
             )
-            return {'success': False, 'result': str(e)}
+            return self._finalize_write(
+                {'success': False, 'result': str(e)},
+                effective_mode=effective_mode,
+                exception=e,
+            )
 
         if response is None:
             self.logger.warning(
@@ -346,11 +414,14 @@ class ADUserService:
                 response.get("result"),
                 change_affects,
             )
-        return {
-            'success': response.get('success', False),
-            'result': response.get('result'),
-            'changes': change_affects,
-        }
+        return self._finalize_write(
+            {
+                'success': response.get('success', False),
+                'result': response.get('result'),
+                'changes': change_affects,
+            },
+            effective_mode=effective_mode,
+        )
 
     @staticmethod
     def attributes() -> list[str]:
@@ -376,6 +447,7 @@ class ADUserService:
         new_password: str,
         *,
         must_change_at_next_logon: bool = False,
+        compatibility_mode: str | None = None,
     ) -> dict[str, Any]:
         """Set a new password for the specified user.
 
@@ -384,10 +456,13 @@ class ADUserService:
             new_password (str): The new password to set.
             must_change_at_next_logon (bool): If True, forces the user to change
                 their password at the next logon. Defaults to False.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: Result payload with 'success' and 'result' keys.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
         distinguished_name = (user.distinguishedName
                               if isinstance(user, ADUser)
                               else str(user))
@@ -399,7 +474,10 @@ class ADUserService:
             if not response.get('success'):
                 self.logger.warning("Failed to set password for user %s: %s", account_label,
                                     response.get('result'))
-                return {'success': False, 'result': response.get('result')}
+                return self._finalize_write(
+                    {'success': False, 'result': response.get('result')},
+                    effective_mode=effective_mode,
+                )
 
             if must_change_at_next_logon:
                 force_resp = self.ad_connection.force_change_password_at_next_logon(
@@ -410,22 +488,32 @@ class ADUserService:
                         "Failed to set 'must change password' for user %s: %s",
                         account_label, force_resp.get('result')
                     )
-                    return {
-                        'success': False,
-                        'result': {
-                            'password': response.get('result'),
-                            'must_change': force_resp.get('result'),
+                    return self._finalize_write(
+                        {
+                            'success': False,
+                            'result': {
+                                'password': response.get('result'),
+                                'must_change': force_resp.get('result'),
+                            },
                         },
-                    }
+                        effective_mode=effective_mode,
+                    )
         except LDAPException as e:
             self.logger.error("Exception occurred while setting password for user %s: %s",
                               account_label, str(e))
-            return {'success': False, 'result': str(e)}
+            return self._finalize_write(
+                {'success': False, 'result': str(e)},
+                effective_mode=effective_mode,
+                exception=e,
+            )
 
         self.logger.info("Successfully set password for user %s", account_label)
-        return {'success': True, 'result': response.get('result')}
+        return self._finalize_write(
+            {'success': True, 'result': response.get('result')},
+            effective_mode=effective_mode,
+        )
 
-    def create_user(
+    def create_user(  # pylint: disable=too-many-locals
         self,
         cn: str,
         ou_dn: str,
@@ -445,16 +533,20 @@ class ADUserService:
                 at next logon (only applies when set_password is provided)
             - enable_after_create: if True, enables the user after create
                 (requires password set first in most setups)
+            - compatibility_mode: optional per-call compatibility mode override
+                controlling the response envelope shape
         """
         set_password = options.get('set_password')
         must_change_password = options.get('must_change_password_at_next_logon', False)
         enable_after_create = options.get('enable_after_create', False)
         unexpected_options = set(options) - {
-            'set_password', 'must_change_password_at_next_logon', 'enable_after_create'
+            'set_password', 'must_change_password_at_next_logon', 'enable_after_create',
+            'compatibility_mode',
         }
         if unexpected_options:
             raise ValueError(f"Unsupported options provided: {sorted(unexpected_options)}")
 
+        effective_mode = self._resolve_effective_mode(options.get('compatibility_mode'))
         dn = self._user_dn(cn, ou_dn)
 
         # Build attributes for creation (objectClass MUST be present on add)
@@ -466,11 +558,18 @@ class ADUserService:
             response = self.ad_connection.add_entry(dn, create_attrs)
         except LDAPException as e:
             self.logger.error("Failed to create AD user CN=%s in %s: %s", cn, ou_dn, e)
-            return {'success': False, 'result': str(e), 'dn': dn}
+            return self._finalize_write(
+                {'success': False, 'result': str(e), 'dn': dn},
+                effective_mode=effective_mode,
+                exception=e,
+            )
 
         if not response.get('success'):
             self.logger.warning("Create user failed for %s: %s", dn, response.get('result'))
-            return {'success': False, 'result': response.get('result'), 'dn': dn}
+            return self._finalize_write(
+                {'success': False, 'result': response.get('result'), 'dn': dn},
+                effective_mode=effective_mode,
+            )
 
         # Optional: set password then enable
         if set_password:
@@ -480,47 +579,68 @@ class ADUserService:
             if not pw_resp.get('success'):
                 self.logger.warning("Set password failed for %s: %s", dn, pw_resp.get('result'))
                 # You may choose to return failure or proceed; here we surface partial failure:
-                return {
-                    'success': False,
-                    'result': {
-                        'create': response.get('result'),
-                        'password': pw_resp.get('result')
+                return self._finalize_write(
+                    {
+                        'success': False,
+                        'result': {
+                            'create': response.get('result'),
+                            'password': pw_resp.get('result')
+                        },
+                        'dn': dn,
                     },
-                    'dn': dn,
-                }
+                    effective_mode=effective_mode,
+                )
 
         if enable_after_create:
             en_resp = self.enable_user(dn)
             if not en_resp.get('success'):
                 self.logger.warning("Enable user failed for %s: %s", dn, en_resp.get('result'))
-                return {
-                    'success': False,
-                    'result': {'create': response.get('result'), 'enable': en_resp.get('result')},
-                    'dn': dn,
-                }
+                return self._finalize_write(
+                    {
+                        'success': False,
+                        'result': {'create': response.get('result'),
+                                   'enable': en_resp.get('result')},
+                        'dn': dn,
+                    },
+                    effective_mode=effective_mode,
+                )
 
         self.logger.info("Created AD user: %s", dn)
-        return {'success': True, 'result': response.get('result'), 'dn': dn}
+        return self._finalize_write(
+            {'success': True, 'result': response.get('result'), 'dn': dn},
+            effective_mode=effective_mode,
+        )
 
-    def rename_user_cn(self, user: ADUser, new_cn: str) -> dict[str, Any]:
+    def rename_user_cn(
+        self, user: ADUser, new_cn: str, compatibility_mode: str | None = None
+    ) -> dict[str, Any]:
         """
         Rename the user's CN (relative DN) without changing their OU placement.
 
         Args:
             user: The ADUser to rename.
             new_cn: The new common name for the user.
+            compatibility_mode: Optional per-call compatibility mode override
+                controlling the response envelope shape.
 
         Returns:
             Dictionary containing the result of the rename operation.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
         current_dn = getattr(user, "distinguishedName", None)
         if not current_dn:
-            return {"success": False, "result": "User distinguishedName unavailable"}
+            return self._finalize_write(
+                {"success": False, "result": "User distinguishedName unavailable"},
+                effective_mode=effective_mode,
+            )
 
         # Extract the current OU from the DN (everything after the first comma)
         dn_parts = current_dn.split(',', 1)
         if len(dn_parts) < 2:
-            return {"success": False, "result": "Invalid distinguishedName format"}
+            return self._finalize_write(
+                {"success": False, "result": "Invalid distinguishedName format"},
+                effective_mode=effective_mode,
+            )
 
         current_ou = dn_parts[1]
         new_relative_dn = f"CN={new_cn}"
@@ -540,7 +660,11 @@ class ADUserService:
                 new_cn,
                 str(e),
             )
-            return {'success': False, 'result': str(e)}
+            return self._finalize_write(
+                {'success': False, 'result': str(e)},
+                effective_mode=effective_mode,
+                exception=e,
+            )
 
         result = dict(response) if response is not None else {'success': False, 'result': None}
 
@@ -552,7 +676,7 @@ class ADUserService:
                 new_cn,
                 result.get('result'),
             )
-            return result
+            return self._finalize_write(result, effective_mode=effective_mode)
 
         # Update the user object with the new DN and CN
         setattr(user, 'distinguishedName', new_full_dn)
@@ -569,4 +693,4 @@ class ADUserService:
             new_cn,
         )
 
-        return result
+        return self._finalize_write(result, effective_mode=effective_mode)

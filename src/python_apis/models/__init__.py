@@ -10,6 +10,7 @@ from python_apis.models.ad_ou import ADOrganizationalUnit
 from python_apis.models.ad_responses import (
     ADResponse,
     ADOperationResponse,
+    ADOperationEnvelope,
     ADEntry,
     ADSearchResponse,
 )
@@ -25,6 +26,7 @@ __all__ = [
 
     "ADResponse",
     "ADOperationResponse",
+    "ADOperationEnvelope",
     "ADEntry",
     "ADSearchResponse",
 

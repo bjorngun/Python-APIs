@@ -16,7 +16,10 @@ from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADOrganizationalUnit, base
 from python_apis.schemas import ADOrganizationalUnitSchema
-from python_apis.services.compatibility_mode import resolve_service_compatibility_mode
+from python_apis.services.compatibility_mode import (
+    finalize_ad_write_response,
+    resolve_service_compatibility_mode,
+)
 
 class ADOrganizationalUnitService:
     """Service class for interacting with Active Directory organizational units.
@@ -244,7 +247,11 @@ class ADOrganizationalUnitService:
         return ad_ous
 
     def modify_ou(
-        self, ou: ADOrganizationalUnit, changes: list[tuple[str, str]]) -> dict[str, Any]:
+        self,
+        ou: ADOrganizationalUnit,
+        changes: list[tuple[str, str]],
+        compatibility_mode: str | None = None,
+    ) -> dict[str, Any]:
         """Modify attributes of a organizational unit in Active Directory.
 
         Args:
@@ -253,6 +260,8 @@ class ADOrganizationalUnitService:
                 Each tuple consists of an attribute name and its new value.
                 For example:
                     [('name', 'John'), ('description', 'Doe')]
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: A dictionary containing the result of the modify operation with the
@@ -262,6 +271,7 @@ class ADOrganizationalUnitService:
                 - 'changes' (dict[str, str]): A mapping of attribute names to their changes in the
                 format 'old_value -> new_value'.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
         change_affects = {k: f"{getattr(ou, k)} -> {v}" for k, v in changes}
         try:
             response = self.ad_connection.modify(ou.distinguishedName, changes)
@@ -272,7 +282,11 @@ class ADOrganizationalUnitService:
                 change_affects,
                 str(e),
             )
-            return {'success': False, 'result': str(e)}
+            return finalize_ad_write_response(
+                {'success': False, 'result': str(e)},
+                effective_mode=effective_mode,
+                exception=e,
+            )
 
         if response is None:
             self.logger.warning(
@@ -289,11 +303,14 @@ class ADOrganizationalUnitService:
                 response.get("result"),
                 change_affects,
             )
-        return {
-            'success': response.get('success', False),
-            'result': response.get('result'),
-            'changes': change_affects,
-        }
+        return finalize_ad_write_response(
+            {
+                'success': response.get('success', False),
+                'result': response.get('result'),
+                'changes': change_affects,
+            },
+            effective_mode=effective_mode,
+        )
 
     @staticmethod
     def attributes() -> list[str]:

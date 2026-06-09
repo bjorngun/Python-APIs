@@ -14,9 +14,9 @@ Stage N scope note:
 """
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, computed_field
 
 _ADResponseT = TypeVar("_ADResponseT", bound="ADResponse")
 
@@ -41,9 +41,12 @@ class ADResponse(BaseModel, Mapping):
     _missing_default_factory: Callable[[], Any] | None = PrivateAttr(default=None)
 
     def _mapping_keys(self) -> list[str]:
-        """Return the ordered key surface (declared fields then extras)."""
+        """Return the ordered key surface (fields, computed fields, then extras)."""
 
         keys = list(type(self).model_fields.keys())
+        keys.extend(
+            key for key in type(self).model_computed_fields.keys() if key not in keys
+        )
         extra = self.model_extra or {}
         keys.extend(key for key in extra if key not in keys)
         return keys
@@ -57,6 +60,8 @@ class ADResponse(BaseModel, Mapping):
         """
 
         if key in list(type(self).model_fields.keys()):
+            return getattr(self, key)
+        if key in list(type(self).model_computed_fields.keys()):
             return getattr(self, key)
         extra = self.model_extra or {}
         if key in extra:
@@ -123,6 +128,47 @@ class ADOperationResponse(ADResponse):
     result: Any = None
 
 
+class ADOperationEnvelope(ADResponse):
+    """Consistent operation envelope for AD service calls (ADR 0001, Stage N).
+
+    Provides modern, structured metadata for an AD operation while mirroring the
+    legacy top-level keys (``success``, ``result``, ``message``) so existing
+    consumers keep working during the migration. ``result`` mirrors
+    ``ldap_result`` and ``message`` mirrors ``exception_message``; the mirror
+    values never diverge from their modern counterparts.
+
+    Forward-compatible fields are included now with safe defaults so the
+    envelope shape stays stable across the rollout:
+
+    - ``error_code`` is populated by the normalized error taxonomy (issue #20).
+    - ``retry_count`` / ``retried`` are populated by retry telemetry (issue #21).
+    """
+
+    success: bool
+    operation_kind: Literal["read", "write"]
+    ldap_result: Any = None
+    exception_type: str | None = None
+    exception_message: str | None = None
+    request_context: dict[str, Any] = Field(default_factory=dict)
+    retry_count: int = 0
+    retried: bool = False
+    error_code: str | None = None
+
+    @computed_field
+    @property
+    def result(self) -> Any:
+        """Legacy mirror of :attr:`ldap_result`."""
+
+        return self.ldap_result
+
+    @computed_field
+    @property
+    def message(self) -> str | None:
+        """Legacy mirror of :attr:`exception_message`."""
+
+        return self.exception_message
+
+
 class ADEntry(ADResponse):
     """Typed, dict-compatible representation of a single AD object.
 
@@ -176,8 +222,10 @@ class ADSearchResponse(BaseModel, Sequence):
 
 
 __all__: list[str] = [
+    # pylint: disable=duplicate-code
     "ADResponse",
     "ADOperationResponse",
+    "ADOperationEnvelope",
     "ADEntry",
     "ADSearchResponse",
 ]

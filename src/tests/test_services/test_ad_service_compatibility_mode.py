@@ -19,9 +19,13 @@ class TestServiceCompatibilityModeDefaults(unittest.TestCase):
     def setUp(self):
         self.mock_ad_connection = MagicMock()
         self.mock_sql_connection = MagicMock()
+        self.original_env_value = os.environ.get(AD_COMPATIBILITY_ENV_VAR)
 
     def tearDown(self):
-        os.environ.pop(AD_COMPATIBILITY_ENV_VAR, None)
+        if self.original_env_value is None:
+            os.environ.pop(AD_COMPATIBILITY_ENV_VAR, None)
+            return
+        os.environ[AD_COMPATIBILITY_ENV_VAR] = self.original_env_value
 
     def test_user_service_defaults_to_legacy(self):
         service = ADUserService(

@@ -7,6 +7,7 @@ from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 from python_apis.apis.ad_api import (
     ADConnection,
+    AD_COMPATIBILITY_ENV_VAR,
     ADConnectionError,
     ADMissingServersError,
     resolve_ad_compatibility_mode,
@@ -307,7 +308,7 @@ class TestCompatibilityModeResolution(unittest.TestCase):
     """Tests for compatibility mode resolution precedence and fallback."""
 
     def setUp(self):
-        self.env_var = 'PYTHON_APIS_AD_COMPAT_MODE'
+        self.env_var = AD_COMPATIBILITY_ENV_VAR
         self.original_env = os.environ.get(self.env_var)
 
     def tearDown(self):

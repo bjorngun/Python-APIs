@@ -13,8 +13,14 @@ from python_apis.services.compatibility_mode import (
 class TestCompatibilityModeUtility(unittest.TestCase):
     """Validate deterministic AD compatibility mode resolution behavior."""
 
+    def setUp(self):
+        self.original_env_value = os.environ.get(AD_COMPATIBILITY_ENV_VAR)
+
     def tearDown(self):
-        os.environ.pop(AD_COMPATIBILITY_ENV_VAR, None)
+        if self.original_env_value is None:
+            os.environ.pop(AD_COMPATIBILITY_ENV_VAR, None)
+            return
+        os.environ[AD_COMPATIBILITY_ENV_VAR] = self.original_env_value
 
     def test_resolves_per_call_mode_first(self):
         os.environ[AD_COMPATIBILITY_ENV_VAR] = "strict"

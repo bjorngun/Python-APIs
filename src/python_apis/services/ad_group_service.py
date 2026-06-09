@@ -9,11 +9,12 @@ import os
 from typing import Any
 
 from ldap3.core.exceptions import LDAPException
+from ldap3.utils.conv import escape_filter_chars
 from pydantic import ValidationError
 
 from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
-from python_apis.models import ADGroup, base
+from python_apis.models import ADGroup, ADUser, base
 from python_apis.schemas import ADGroupSchema
 from python_apis.services.compatibility_mode import (
     finalize_ad_write_response,
@@ -194,6 +195,67 @@ class ADGroupService:
                 )
 
         return ad_groups
+
+    def _groups_from_search(self, search_filter: str) -> list[ADGroup]:
+        """Run a group search and build validated ``ADGroup`` instances.
+
+        Shared read path for group lookups: fetches via ``ad_connection.search``
+        (which retries once on recoverable transport errors), annotates the
+        group-type name, validates each record with ``ADGroupSchema``, and skips
+        (logging) any record that fails validation rather than dropping silently.
+        """
+
+        attributes = ADGroup.get_attribute_list()
+        ad_groups_dict = self.ad_connection.search(search_filter, attributes)
+        ad_groups = []
+
+        for group_data in ad_groups_dict:
+            try:
+                self.set_group_type_name(group_data)
+                validated_data = ADGroupSchema(**group_data).model_dump()
+                ad_groups.append(ADGroup(**validated_data))
+            except ValidationError as e:
+                self.logger.error(
+                    "Validation error for group %s: %s",
+                    group_data.get('distinguishedName'),
+                    e,
+                )
+
+        return ad_groups
+
+    def get_user_direct_groups(
+        self,
+        user: ADUser | str,
+        compatibility_mode: str | None = None,
+    ) -> list[ADGroup]:
+        """Return the groups a user is a direct member of.
+
+        Resolves the groups whose ``member`` attribute contains the user's
+        distinguished name, i.e. direct (non-nested) memberships. Note that AD's
+        ``member``/``memberOf`` linkage does not include a user's *primary*
+        group; use :meth:`resolve_primary_group` for that.
+
+        Args:
+            user (ADUser | str): The user, or the user's distinguishedName.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override (accepted for API symmetry; reads return typed models).
+
+        Returns:
+            list[ADGroup]: Direct group memberships (empty list if none).
+        """
+
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_user_direct_groups", effective_mode
+        )
+
+        user_dn = user.distinguishedName if isinstance(user, ADUser) else user
+        if not user_dn:
+            return []
+
+        escaped_dn = escape_filter_chars(str(user_dn))
+        search_filter = f"(&(objectClass=group)(member={escaped_dn}))"
+        return self._groups_from_search(search_filter)
 
     def modify_group(
         self,

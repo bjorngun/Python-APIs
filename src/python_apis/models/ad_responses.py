@@ -46,7 +46,7 @@ class ADResponse(BaseModel, Mapping):
     def __getitem__(self, key: str) -> Any:
         """Return the value for ``key`` using legacy dictionary semantics."""
 
-        if key in type(self).model_fields:
+        if key in list(type(self).model_fields.keys()):
             return getattr(self, key)
         extra = self.model_extra or {}
         if key in extra:

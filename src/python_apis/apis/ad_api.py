@@ -12,6 +12,7 @@ import functools
 import logging
 import os
 import ssl
+from dataclasses import dataclass, field
 from typing import Any
 
 from ldap3.utils.log import set_library_log_detail_level, BASIC
@@ -23,10 +24,55 @@ from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedB
 logger = logging.getLogger(__name__)
 
 _RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
+_RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
 
 AD_COMPATIBILITY_MODES = ('legacy', 'mixed', 'strict')
 AD_DEFAULT_COMPATIBILITY_MODE = 'legacy'
 AD_COMPATIBILITY_ENV_VAR = 'PYTHON_APIS_AD_COMPAT_MODE'
+
+
+def _build_retry_policy(operation_kind: str) -> dict[str, Any]:
+    """Describe the current retry policy for a given operation classification.
+
+    The policy is descriptive (not a control knob in Stage N): every decorated
+    AD operation retries at most once after a rebind when a recoverable
+    transport/session error is raised, so reads and writes currently share the
+    same ``rebind_once`` behavior.
+    """
+
+    return {
+        "operation_kind": operation_kind,
+        "max_attempts": 2,
+        "max_retries": 1,
+        "strategy": "rebind_once",
+        "retry_on": _RECOVERABLE_EXCEPTION_NAMES,
+    }
+
+
+AD_READ_RETRY_POLICY = _build_retry_policy("read")
+AD_WRITE_RETRY_POLICY = _build_retry_policy("write")
+_RETRY_POLICY_BY_KIND = {
+    "read": AD_READ_RETRY_POLICY,
+    "write": AD_WRITE_RETRY_POLICY,
+}
+
+
+@dataclass(frozen=True)
+class RetryTelemetry:
+    """Immutable record of the retry outcome for a single AD operation.
+
+    Captured by :func:`_auto_reconnect` on every decorated call and exposed via
+    :attr:`ADConnection.last_retry_telemetry` so service-layer finalizers can
+    surface retry metadata on the operation envelope (issue #21). Recording is
+    observational only and does not alter retry behavior.
+    """
+
+    operation_kind: str
+    retry_count: int = 0
+    retried: bool = False
+    would_retry: bool = False
+    recovered: bool = False
+    policy: dict[str, Any] = field(default_factory=dict)
 
 
 def resolve_ad_compatibility_mode(
@@ -63,23 +109,54 @@ def resolve_ad_compatibility_mode(
     return AD_DEFAULT_COMPATIBILITY_MODE
 
 
-def _auto_reconnect(method):
-    """Decorator that retries the wrapped method once after a rebind
-    when a recoverable LDAP session/communication error is raised."""
+def _auto_reconnect(operation_kind: str = "write"):
+    """Build a decorator that retries once after a rebind on recoverable errors.
 
-    @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):
-        try:
-            return method(self, *args, **kwargs)
-        except _RECOVERABLE_EXCEPTIONS as exc:
-            logger.warning(
-                "LDAP session error in %s, attempting rebind: %s",
-                method.__name__, exc,
-            )
-            self.rebind()
-            return method(self, *args, **kwargs)
+    ``operation_kind`` (``"read"`` or ``"write"``) selects the descriptive retry
+    policy attached to the recorded :class:`RetryTelemetry`. The control flow is
+    unchanged from the historic behavior: the wrapped method is retried at most
+    once after :meth:`ADConnection.rebind` when a recoverable LDAP
+    session/communication error is raised. Telemetry is recorded for every call
+    (including the no-retry success path) on the connection instance.
+    """
 
-    return wrapper
+    policy = _RETRY_POLICY_BY_KIND.get(operation_kind, AD_WRITE_RETRY_POLICY)
+
+    def decorator(method):
+        @functools.wraps(method)
+        def wrapper(self, *args, **kwargs):
+            retry_count = 0
+            retried = False
+            would_retry = False
+            recovered = False
+            try:
+                try:
+                    return method(self, *args, **kwargs)
+                except _RECOVERABLE_EXCEPTIONS as exc:
+                    logger.warning(
+                        "LDAP session error in %s, attempting rebind: %s",
+                        method.__name__, exc,
+                    )
+                    would_retry = True
+                    retried = True
+                    retry_count = 1
+                    self.rebind()
+                    result = method(self, *args, **kwargs)
+                    recovered = True
+                    return result
+            finally:
+                self._last_retry_telemetry = RetryTelemetry(  # pylint: disable=protected-access
+                    operation_kind=operation_kind,
+                    retry_count=retry_count,
+                    retried=retried,
+                    would_retry=would_retry,
+                    recovered=recovered,
+                    policy=policy,
+                )
+
+        return wrapper
+
+    return decorator
 
 
 class ADConnectionError(Exception):
@@ -115,6 +192,18 @@ class ADConnection:
         self.compatibility_mode = resolve_ad_compatibility_mode(service_mode=compatibility_mode)
         self.connection = self._get_connection(servers)
         self.search_base = search_base
+        self._last_retry_telemetry: RetryTelemetry | None = None
+
+    @property
+    def last_retry_telemetry(self) -> RetryTelemetry | None:
+        """Retry telemetry recorded for the most recent decorated AD operation.
+
+        Returns ``None`` until at least one auto-reconnect-wrapped operation has
+        run on this connection. Service-layer finalizers read this immediately
+        after an operation to surface retry metadata on the response envelope.
+        """
+
+        return self._last_retry_telemetry
 
     def _get_connection(self, servers: list) -> Connection:
         """initializes a connection to the active directory.
@@ -181,7 +270,7 @@ class ADConnection:
 
         ad_object['ou'] = ','.join(distinguished_name.split(',')[1:])
 
-    @_auto_reconnect
+    @_auto_reconnect("read")
     def search(
         self, search_filter: str, attributes: list[str] | None = None
     ) -> list[dict[str, str]]:
@@ -219,7 +308,7 @@ class ADConnection:
         search_result = self.search(search_filter, attributes)
         return search_result[0] if len(search_result) > 0 else collections.defaultdict(lambda: '')
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def modify(self, distinguished_name: str, changes: list[tuple[str, str]]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of changes.
 
@@ -238,7 +327,7 @@ class ADConnection:
         success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def add_value(self, distinguished_name: str, changes: dict[str, str]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of field and value where the value is added to
         the field specified, this is very useful to add a value to a list.
@@ -258,7 +347,7 @@ class ADConnection:
         success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def remove_value(self, distinguished_name: str, changes: dict[str, str]) -> dict[str, Any]:
         """Takes in distinguished_name and dict of field and value where the specified value is
         removed to the field specified, this is very useful to add a value to a
@@ -309,7 +398,7 @@ class ADConnection:
         changes = {'member': user_dn}
         return self.remove_value(group_dn, changes)
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def move_entry(self, distinguished_name: str, new_ou_dn: str) -> dict[str, Any]:
         """Move an AD object to the provided OU while keeping the same relative DN.
 
@@ -329,7 +418,7 @@ class ADConnection:
         )
         return {'result': self.connection.result, 'success': success}
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def rename_dn(self, distinguished_name: str, new_relative_dn: str) -> dict[str, Any]:
         """Rename an AD object's relative DN (CN) while keeping it in the same OU.
 
@@ -350,7 +439,7 @@ class ADConnection:
     # ---------------------------------------------------------------------
     # Create new user
     # ---------------------------------------------------------------------
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def add_entry(self, distinguished_name: str, attributes: dict[str, object]) -> dict[str, Any]:
         """Create a new AD object (e.g., user) at the given DN with the provided attributes.
         `attributes` MUST include a valid objectClass list,
@@ -360,7 +449,7 @@ class ADConnection:
         success = self.connection.add(distinguished_name, attributes=attributes)
         return {'result': self.connection.result, 'success': success}
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def set_password(self, distinguished_name: str, new_password: str) -> dict[str, Any]:
         """Set the user's password. Requires LDAPS/StartTLS and appropriate rights.
         """
@@ -368,7 +457,7 @@ class ADConnection:
         success = password_ext.modify_password(distinguished_name, new_password)
         return {'result': self.connection.result, 'success': success}
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def force_change_password_at_next_logon(
         self, distinguished_name: str, force: bool = True
     ) -> dict[str, Any]:
@@ -389,7 +478,7 @@ class ADConnection:
         success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def enable_user(self, distinguished_name: str) -> dict[str, Any]:
         """Enable an AD user by setting userAccountControl to 512 (NORMAL_ACCOUNT).
         """
@@ -398,7 +487,7 @@ class ADConnection:
         success = self.connection.modify(distinguished_name, changes)
         return {'result': self.connection.result, 'success': success}
 
-    @_auto_reconnect
+    @_auto_reconnect("write")
     def disable_user(self, distinguished_name: str) -> dict[str, Any]:
         """Disable an AD user by setting userAccountControl to 514 (ACCOUNTDISABLE).
         """

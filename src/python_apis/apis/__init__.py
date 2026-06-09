@@ -43,6 +43,9 @@ from python_apis.apis.ad_api import (
     AD_COMPATIBILITY_ENV_VAR,
     AD_COMPATIBILITY_MODES,
     AD_DEFAULT_COMPATIBILITY_MODE,
+    AD_READ_RETRY_POLICY,
+    AD_WRITE_RETRY_POLICY,
+    RetryTelemetry,
     resolve_ad_compatibility_mode,
 )
 from python_apis.apis.jira_api import JiraConnection
@@ -53,6 +56,9 @@ __all__ = [
     "AD_COMPATIBILITY_ENV_VAR",
     "AD_COMPATIBILITY_MODES",
     "AD_DEFAULT_COMPATIBILITY_MODE",
+    "AD_READ_RETRY_POLICY",
+    "AD_WRITE_RETRY_POLICY",
+    "RetryTelemetry",
     "resolve_ad_compatibility_mode",
     "JiraConnection",
     "SQLConnection",

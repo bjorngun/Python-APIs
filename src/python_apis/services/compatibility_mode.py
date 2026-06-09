@@ -111,6 +111,52 @@ def finalize_ad_write_response(
     return payload
 
 
+def finalize_ad_read_response(  # pylint: disable=too-many-arguments
+    read_result: Any,
+    *,
+    effective_mode: str,
+    success: bool | None = None,
+    exception: BaseException | None = None,
+    retry_telemetry: RetryTelemetry | None = None,
+    request_context: dict[str, Any] | None = None,
+) -> Any:
+    """Optionally wrap an AD read outcome in an operation envelope.
+
+    This helper is opt-in: default read service methods keep returning their
+    historic value (for example ``list[ADUser]``). In ``legacy`` mode the raw
+    ``read_result`` is returned unchanged (non-breaking, mirroring
+    :func:`finalize_ad_write_response`). In ``mixed`` and ``strict`` modes an
+    :class:`ADOperationEnvelope` with ``operation_kind="read"`` is built, with
+    ``read_result`` exposed as ``ldap_result`` and any captured
+    ``retry_telemetry`` surfaced as retry metadata.
+
+    ``success`` defaults to ``exception is None`` when not supplied.
+    """
+
+    if effective_mode == "legacy":
+        return read_result
+
+    if success is None:
+        success = exception is None
+    error_code = resolve_error_code(
+        exception=exception,
+        ldap_result=read_result,
+        success=success,
+    )
+    context = dict(request_context or {})
+    context["compatibility_mode"] = effective_mode
+    envelope = ADOperationEnvelope.from_operation(
+        operation_kind="read",
+        success=success,
+        ldap_result=read_result,
+        exception=exception,
+        request_context=context,
+        error_code=error_code,
+        **_retry_envelope_kwargs(retry_telemetry),
+    )
+    return envelope.to_response(effective_mode)
+
+
 __all__ = [
     "ADCompatibilityMode",
     "AD_COMPATIBILITY_MODES",
@@ -118,4 +164,5 @@ __all__ = [
     "AD_COMPATIBILITY_ENV_VAR",
     "resolve_service_compatibility_mode",
     "finalize_ad_write_response",
+    "finalize_ad_read_response",
 ]

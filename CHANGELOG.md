@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - 8 new unit tests for reconnect behaviour (64 total tests)
 - Repository planning and PR workflow skills: `plan-issue`, `pr-create`, and `pr-comments`
 - PR template and contributor guidance for SemVer labeling and task-bounded commit workflow
+- AD compatibility mode framework with `legacy`, `mixed`, and `strict` modes, including:
+  global/env resolution (`PYTHON_APIS_AD_COMPAT_MODE`), service defaults, per-call overrides,
+  and runtime introspection helpers for AD services and ADConnection
+- Expanded compatibility-mode coverage across AD API and service tests
 
 ### Fixed
 

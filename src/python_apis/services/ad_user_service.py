@@ -15,13 +15,25 @@ from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADUser
 from python_apis.schemas import ADUserSchema
+from python_apis.services.compatibility_mode import resolve_service_compatibility_mode
 
 class ADUserService:
     """Service class for interacting with Active Directory users.
+
+        Compatibility mode contract:
+        - Supported modes are ``legacy``, ``mixed``, and ``strict``.
+        - Effective mode precedence is per-call override, then service default,
+            then `PYTHON_APIS_AD_COMPAT_MODE`, then ``legacy`` fallback.
+        - Invalid or empty mode values must resolve to ``legacy`` deterministically.
     """
 
-    def __init__(self, ad_connection: ADConnection = None, sql_connection: SQLConnection = None,
-                 ldap_logging: bool = False):
+    def __init__(
+        self,
+        ad_connection: ADConnection = None,
+        sql_connection: SQLConnection = None,
+        ldap_logging: bool = False,
+        compatibility_mode: str | None = None,
+    ):
         """Initialize the ADUserService with an ADConnection and an SQLConnection.
 
         Args:
@@ -30,8 +42,14 @@ class ADUserService:
             sql_connection (SQLConnection, optional): An existing SQLConnection instance.
                 If None, a new one will be created.
             ldap_logging (bool, optional): Whether to enable LDAP logging. Defaults to False.
+            compatibility_mode (str | None, optional): Default compatibility mode for the
+                service instance. Resolved with deterministic precedence against environment
+                defaults and fallback behavior.
         """
         self.logger = getLogger(__name__)
+        self.compatibility_mode = resolve_service_compatibility_mode(
+            service_mode=compatibility_mode
+        )
 
         if sql_connection is None:
             sql_connection = self._get_sql_connection()
@@ -40,6 +58,21 @@ class ADUserService:
         if ad_connection is None:
             ad_connection = self._get_ad_connection(ldap_logging)
         self.ad_connection = ad_connection
+
+    def _resolve_effective_mode(self, compatibility_mode: str | None = None) -> str:
+        """Resolve effective compatibility mode for a service operation."""
+        return resolve_service_compatibility_mode(
+            per_call_mode=compatibility_mode,
+            service_mode=self.compatibility_mode,
+        )
+
+    def get_compatibility_mode(self, compatibility_mode: str | None = None) -> dict[str, str]:
+        """Return service default and effective compatibility mode for this context."""
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        return {
+            'service_default_mode': self.compatibility_mode,
+            'effective_mode': effective_mode,
+        }
 
     def _get_sql_connection(self) -> SQLConnection:
         return SQLConnection(
@@ -110,7 +143,11 @@ class ADUserService:
             self.logger.error('Rolling back changes, error: %s', e)
             raise e
 
-    def get_users_from_ad(self, search_filter: str = '(objectClass=user)') -> list[ADUser]:
+    def get_users_from_ad(
+        self,
+        search_filter: str = '(objectClass=user)',
+        compatibility_mode: str | None = None,
+    ) -> list[ADUser]:
         """Retrieve users from Active Directory based on a search filter.
 
         Args:
@@ -119,6 +156,9 @@ class ADUserService:
         Returns:
             list[ADUser]: A list of ADUser instances matching the search criteria.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug("Using AD compatibility mode '%s' for get_users_from_ad", effective_mode)
+
         attributes = ADUser.get_attribute_list()
         ad_users_dict = self.ad_connection.search(search_filter, attributes)
         ad_users = []
@@ -141,12 +181,22 @@ class ADUserService:
         #ad_users = [ADUser(**x) for x in ad_users_dict]
         return ad_users
 
-    def get_all_sam_account_names(self, search_filter: str = '(objectClass=user)') -> set[str]:
+    def get_all_sam_account_names(
+        self,
+        search_filter: str = '(objectClass=user)',
+        compatibility_mode: str | None = None,
+    ) -> set[str]:
         """Retrieve all sAMAccountName values from Active Directory.
 
         Returns:
             set[str]: A set of all sAMAccountName values.
         """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_all_sam_account_names",
+            effective_mode,
+        )
+
         attributes = ['sAMAccountName']
         ad_users_dict = self.ad_connection.search(search_filter, attributes)
         sam_account_names = {str(user.get('sAMAccountName')) for user

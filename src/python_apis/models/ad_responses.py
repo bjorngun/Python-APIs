@@ -1,22 +1,20 @@
-"""Typed, dict-compatible AD response models (ADR 0001, Stage N).
+"""Typed, dict-compatible AD response models (ADR 0001, Stage 3).
 
-This module provides additive typed response models for Active Directory
+This module provides the strict typed response models for Active Directory
 operations. The models are JSON-serializable Pydantic models that also behave
-like read-only mappings, so existing consumers that rely on legacy dictionary
-access (for example ``response['success']`` or ``response['result']``) continue
-to work unchanged.
+like read-only mappings, so consumers may use either typed attribute access or
+dictionary-style access (for example ``response['success']``).
 
-Stage N scope note:
-    These models are introduced additively. They do not change what
-    ``python_apis.apis.ad_api.ADConnection`` methods return today; wiring the
-    models into live operation envelopes with legacy mirroring is tracked
-    separately (issue #19).
+Stage 3 scope note:
+    The legacy/mixed compatibility surface has been removed. Envelopes expose
+    only modern fields; the historic ``result``/``message`` mirror keys and the
+    ``ADConnection.get`` empty-default mapping behavior no longer exist.
 """
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import NoInspectionAvailable
 
@@ -27,20 +25,15 @@ class ADResponse(BaseModel, Mapping):
     """Base AD response model that is both typed and dict-compatible.
 
     Subclasses gain typed attribute access while remaining usable as read-only
-    mappings. Legacy consumers can continue to use dictionary-style access such
-    as ``response['success']``, ``response.get('result')``, ``'key' in response``,
-    ``dict(response)`` and ``**response`` without changes.
+    mappings. Consumers can use dictionary-style access such as
+    ``response['success']``, ``response.get('result')``, ``'key' in response``,
+    ``dict(response)`` and ``**response``.
 
     Unknown keys provided at construction time are preserved (``extra='allow'``)
     so adapters never silently drop data.
     """
 
     model_config = ConfigDict(extra="allow")
-
-    # Optional default-factory captured from a legacy ``defaultdict`` source so
-    # missing-key access can preserve the original default (for example the
-    # empty-string default produced by ``ADConnection.get`` on no match).
-    _missing_default_factory: Callable[[], Any] | None = PrivateAttr(default=None)
 
     def _mapping_keys(self) -> list[str]:
         """Return the ordered key surface (fields, computed fields, then extras)."""
@@ -54,11 +47,9 @@ class ADResponse(BaseModel, Mapping):
         return keys
 
     def __getitem__(self, key: str) -> Any:
-        """Return the value for ``key`` using legacy dictionary semantics.
+        """Return the value for ``key`` using dictionary semantics.
 
-        If this response was adapted from a ``defaultdict`` (for example the
-        no-result return of ``ADConnection.get``), missing keys resolve to the
-        original default instead of raising ``KeyError``.
+        Missing keys raise ``KeyError`` (strict mapping behavior).
         """
 
         if key in list(type(self).model_fields.keys()):
@@ -68,9 +59,6 @@ class ADResponse(BaseModel, Mapping):
         extra = self.model_extra or {}
         if key in extra:
             return extra[key]
-        default_factory = self._missing_default_factory
-        if default_factory is not None:
-            return default_factory()  # pylint: disable=not-callable
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:  # type: ignore[override]
@@ -95,23 +83,13 @@ class ADResponse(BaseModel, Mapping):
 
     @classmethod
     def from_legacy(cls: type[_ADResponseT], payload: Mapping[str, Any]) -> _ADResponseT:
-        """Wrap a legacy response ``Mapping`` into a typed model losslessly.
+        """Wrap a response ``Mapping`` into a typed model losslessly.
 
         Unknown keys are preserved (``extra='allow'``), so adapting an existing
         payload and calling :meth:`to_dict` round-trips to the original data.
-
-        If ``payload`` is a ``defaultdict`` (or any mapping exposing a
-        ``default_factory``), that factory is retained so missing-key access on
-        the resulting model matches the legacy default behavior.
         """
 
-        instance = cls.model_validate(dict(payload))
-        # Accessing the instance's own private attribute is safe here; pylint
-        # flags same-class private access through a non-``self`` reference.
-        instance._missing_default_factory = getattr(  # pylint: disable=protected-access
-            payload, "default_factory", None
-        )
-        return instance
+        return cls.model_validate(dict(payload))
 
 
 class ADOperationResponse(ADResponse):
@@ -131,21 +109,20 @@ class ADOperationResponse(ADResponse):
 
 
 class ADOperationEnvelope(ADResponse):
-    """Consistent operation envelope for AD service calls (ADR 0001, Stage N).
+    """Consistent strict operation envelope for AD service calls (ADR 0001).
 
-    Provides modern, structured metadata for an AD operation while mirroring the
-    legacy top-level keys (``success``, ``result``, ``message``) so existing
-    consumers keep working during the migration. ``result`` mirrors
-    ``ldap_result`` and ``message`` mirrors ``exception_message``; the mirror
-    values never diverge from their modern counterparts.
+    Provides modern, structured metadata for an AD operation. Only modern
+    fields are exposed; the historic ``result``/``message`` mirror keys have
+    been removed (Stage 3, issue #28). Use ``ldap_result`` and
+    ``exception_message`` directly.
 
-    Forward-compatible fields are included now with safe defaults so the
-    envelope shape stays stable across the rollout:
+    Forward-compatible fields are included with safe defaults so the envelope
+    shape stays stable:
 
     - ``error_code`` is populated by the normalized error taxonomy (issue #20).
     - ``retry_count`` / ``retried`` / ``would_retry`` / ``retry_policy`` are
-      populated by retry telemetry (issue #21). ``did_retry`` is a legacy-style
-      computed mirror of ``retried``.
+      populated by retry telemetry (issue #21). ``did_retry`` is a computed
+      convenience alias of ``retried``.
     """
 
     success: bool
@@ -162,22 +139,8 @@ class ADOperationEnvelope(ADResponse):
 
     @computed_field
     @property
-    def result(self) -> Any:
-        """Legacy mirror of :attr:`ldap_result`."""
-
-        return self.ldap_result
-
-    @computed_field
-    @property
-    def message(self) -> str | None:
-        """Legacy mirror of :attr:`exception_message`."""
-
-        return self.exception_message
-
-    @computed_field
-    @property
     def did_retry(self) -> bool:
-        """Telemetry mirror of :attr:`retried` (issue #21 vocabulary)."""
+        """Convenience alias of :attr:`retried` (issue #21 vocabulary)."""
 
         return self.retried
 
@@ -231,30 +194,14 @@ class ADOperationEnvelope(ADResponse):
             error_code=error_code,
         )
 
-    def to_response(self, mode: str | None = None) -> dict[str, Any]:
-        """Return the envelope as a dict shaped for the given compatibility mode.
+    def to_response(self) -> dict[str, Any]:
+        """Return the envelope as a strict, JSON-serializable ``dict``.
 
-        - ``legacy``/``mixed``: include legacy mirror keys (``success``,
-          ``result``, ``message``) alongside modern fields.
-        - ``strict``: omit legacy mirror keys and return only the modern
-          envelope fields.
-
-        Any unknown or empty ``mode`` resolves to ``legacy`` via
-        :func:`resolve_ad_compatibility_mode`, preserving a non-breaking default.
+        Only modern envelope fields are included; the historic ``result`` and
+        ``message`` mirror keys no longer exist (Stage 3, issue #28).
         """
 
-        # Imported lazily to avoid a circular import: ``models`` is imported by
-        # the package ``__init__`` before ``apis`` finishes initializing.
-        from python_apis.apis.ad_api import (  # pylint: disable=import-outside-toplevel
-            resolve_ad_compatibility_mode,
-        )
-
-        resolved = resolve_ad_compatibility_mode(per_call_mode=mode)
-        payload = self.to_dict()
-        if resolved == "strict":
-            for legacy_key in ("result", "message"):
-                payload.pop(legacy_key, None)
-        return payload
+        return self.to_dict()
 
 
 class ADEntry(ADResponse):

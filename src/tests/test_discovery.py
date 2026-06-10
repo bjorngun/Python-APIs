@@ -65,30 +65,6 @@ class TestCapabilityRegistry(unittest.TestCase):
         self.assertIn("Available:", str(ctx.exception))
 
 
-class TestCompatibilityModeIntrospection(unittest.TestCase):
-    """Validate mode introspection helpers."""
-
-    def test_active_compatibility_mode_returns_known_mode(self):
-        mode = discovery.active_compatibility_mode()
-        self.assertIn(mode, ("legacy", "mixed", "strict"))
-
-    def test_active_compatibility_mode_honors_per_call_override(self):
-        self.assertEqual(
-            discovery.active_compatibility_mode(per_call_mode="strict"),
-            "strict",
-        )
-
-    def test_describe_compatibility_modes_shape(self):
-        described = discovery.describe_compatibility_modes()
-        self.assertIn("env_var", described)
-        self.assertIn("default_mode", described)
-        self.assertIn("active_mode", described)
-        self.assertEqual(
-            set(described["modes"]),
-            {"legacy", "mixed", "strict"},
-        )
-
-
 class TestQuickReference(unittest.TestCase):
     """Validate the printable quick reference."""
 

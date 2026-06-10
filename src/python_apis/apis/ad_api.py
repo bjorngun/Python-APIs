@@ -7,10 +7,8 @@ this package will need a user that has the required permissions to edit/read the
 AD to run it effectively.
 """
 
-import collections
 import functools
 import logging
-import os
 import ssl
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,17 +19,12 @@ from ldap3 import (ALL_ATTRIBUTES, BASE, MODIFY_ADD, MODIFY_DELETE,
                    Connection, Server, ServerPool, Tls)
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 
-from python_apis.deprecation import warn_legacy
 from python_apis.models.ad_get import ADGetResult
 
 logger = logging.getLogger(__name__)
 
 _RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
 _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
-
-AD_COMPATIBILITY_MODES = ('legacy', 'mixed', 'strict')
-AD_DEFAULT_COMPATIBILITY_MODE = 'legacy'
-AD_COMPATIBILITY_ENV_VAR = 'PYTHON_APIS_AD_COMPAT_MODE'
 
 
 def _build_retry_policy(operation_kind: str) -> dict[str, Any]:
@@ -76,40 +69,6 @@ class RetryTelemetry:
     would_retry: bool = False
     recovered: bool = False
     policy: dict[str, Any] = field(default_factory=dict)
-
-
-def resolve_ad_compatibility_mode(
-    per_call_mode: str | None = None,
-    service_mode: str | None = None,
-    env_mode: str | None = None,
-) -> str:
-    """Resolve the effective AD compatibility mode.
-
-    Precedence is deterministic and shared across AD APIs/services:
-    `per_call_mode` -> `service_mode` -> environment variable
-    (`PYTHON_APIS_AD_COMPAT_MODE`) -> `legacy`.
-
-    Any unknown, empty, or whitespace-only mode value falls back to `legacy`.
-    """
-
-    selected_env_mode = env_mode if env_mode is not None else os.getenv(AD_COMPATIBILITY_ENV_VAR)
-    candidates = (per_call_mode, service_mode, selected_env_mode)
-    for mode in candidates:
-        if mode is None:
-            continue
-        normalized_mode = str(mode).strip().lower()
-        if not normalized_mode:
-            continue
-        if normalized_mode in AD_COMPATIBILITY_MODES:
-            return normalized_mode
-        logger.warning(
-            "Unsupported AD compatibility mode '%s'. Falling back to '%s'.",
-            mode,
-            AD_DEFAULT_COMPATIBILITY_MODE,
-        )
-        return AD_DEFAULT_COMPATIBILITY_MODE
-
-    return AD_DEFAULT_COMPATIBILITY_MODE
 
 
 def _auto_reconnect(operation_kind: str = "write"):
@@ -186,13 +145,11 @@ class ADConnection:
         servers: list,
         search_base: str,
         enable_ldap_logging: bool = False,
-        compatibility_mode: str | None = None,
     ):
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
 
         self._servers = servers
-        self.compatibility_mode = resolve_ad_compatibility_mode(service_mode=compatibility_mode)
         self.connection = self._get_connection(servers)
         self.search_base = search_base
         self._last_retry_telemetry: RetryTelemetry | None = None
@@ -296,66 +253,18 @@ class ADConnection:
             self._set_ou_for_object(ad_object)
         return result_list
 
-    def get(self, search_filter: str, attributes: list[str] | None = None) -> dict[str, str]:
-        """Returns a single result, the first result if more then one result
-        is matched and an empty dict if zero results where returned.
-
-        .. deprecated::
-            Prefer :meth:`get_v2`, which returns a typed :class:`ADGetResult`
-            with an explicit ``found`` flag. The legacy empty-default mapping is
-            indistinguishable from a real object whose attributes are all empty.
-
-            Before (legacy, ambiguous)::
-
-                obj = conn.get("(sAMAccountName=jdoe)", ["cn"])
-                if obj.get("cn"):   # empty default vs present-but-empty
-                    ...
-
-            After (typed, unambiguous)::
-
-                res = conn.get_v2("(sAMAccountName=jdoe)", ["cn"])
-                if res.found:
-                    use(res.item)
-
-            See ``python_apis.discovery.get_capability('get-v2')`` and
-            ``python_apis.migration_examples.legacy_get_to_get_v2()``.
-
-        Args:
-            search_filter (str): An LDAP filter string.
-            attributes (list[str] | None): Attributes to fetch; ``None`` fetches
-                ``ALL_ATTRIBUTES``.
-
-        Returns:
-            dict[str, str]: AD object as a dict, empty values if none were found.
-        """
-
-        warn_legacy(
-            "ADConnection.get",
-            replacement="ADConnection.get_v2",
-            migration_hint=(
-                "Branch on ADGetResult.found instead of probing the empty default "
-                "mapping; see python_apis.discovery.get_capability('get-v2')."
-            ),
-            stacklevel=3,
-        )
-        search_result = self.search(search_filter, attributes)
-        return search_result[0] if len(search_result) > 0 else collections.defaultdict(lambda: '')
-
     def get_v2(
         self, search_filter: str, attributes: list[str] | None = None
     ) -> ADGetResult:
-        """Typed, found/not-found-aware counterpart of :meth:`get`.
+        """Read a single AD object as a typed, found/not-found-aware envelope.
 
-        Unlike :meth:`get`, which returns an empty ``defaultdict`` when nothing
-        matches (indistinguishable from a real object whose attributes are all
-        empty), this returns an :class:`ADGetResult` envelope with an explicit
-        ``found`` flag and a deterministic ``not_found_reason`` so callers can
-        tell "absent" from "present but empty". The legacy :meth:`get` is
-        unchanged.
+        Returns an :class:`ADGetResult` envelope with an explicit ``found`` flag
+        and a deterministic ``not_found_reason`` so callers can tell "absent"
+        from "present but empty".
 
         Not-found semantics are deterministic: a search returning zero rows
         yields ``found=False`` with ``not_found_reason="no_match"``. When several
-        rows match, the first is returned as ``found=True`` (matching :meth:`get`).
+        rows match, the first is returned as ``found=True``.
 
         Args:
             search_filter (str): An LDAP filter string.

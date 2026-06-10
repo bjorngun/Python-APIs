@@ -1,22 +1,26 @@
 # Migration Guide: AD `get_v2` Typed Not-Found (Issue #26)
 
-> Status: Additive, non-breaking (SemVer **minor**)
-> Related: [ADR 0001](../adr/0001-ad-response-modernization.md), issue #26
+> Status: **Stage N+2 (Issue #28): legacy `get` removed — `get_v2` is now the only single-object read.**
+> Related: [ADR 0001](../adr/0001-ad-response-modernization.md), issues #26, #28
 
-Issue #26 introduces an **additive** single-object read, `ADConnection.get_v2`.
-The legacy `ADConnection.get(search_filter, attributes)` returns the first matched
+> **⚠️ Stage N+2 update (Issue #28, `semver:major`):** `ADConnection.get()` has been **removed**.
+> `ADConnection.get_v2()` returning an `ADGetResult` is now the single canonical single-object
+> read. Replace every `conn.get(...)` call with `conn.get_v2(...)` (see
+> [Before / after](#before--after) and the [migration helper](#migration-helper)).
+
+Issue #26 introduced an **additive** single-object read, `ADConnection.get_v2`.
+The former `ADConnection.get(search_filter, attributes)` returned the first matched
 object as a `dict`, or an empty `collections.defaultdict(lambda: '')` when nothing
-matches. That empty default is **indistinguishable** from a real object whose
-attributes happen to all be empty, so callers cannot reliably tell "absent" from
-"present but empty".
+matched. That empty default was **indistinguishable** from a real object whose
+attributes happen to all be empty, so callers could not reliably tell "absent" from
+"present but empty". As of #28 that ambiguous `get` is gone.
 
 `get_v2` returns an `ADGetResult` envelope with an explicit `found` flag plus a
-deterministic `not_found_reason`. The legacy `get` is **unchanged**; `get_v2` is
-purely additive.
+deterministic `not_found_reason`.
 
 ## What changed
 
-| Legacy method (unchanged) | New v2 method | Returns |
+| Removed in #28 | Replacement | Returns |
 | --- | --- | --- |
 | `ADConnection.get` | `ADConnection.get_v2` | `ADGetResult` |
 
@@ -46,7 +50,7 @@ Constructors: `ADGetResult.found_item(item)` and `ADGetResult.not_found(reason="
 
 ## Before / after
 
-**Before (legacy, ambiguous):**
+**Before (removed legacy `get`, ambiguous):**
 
 ```python
 obj = conn.get("(sAMAccountName=jdoe)", ["cn", "sAMAccountName"])
@@ -83,5 +87,5 @@ connection-free envelope demo and a migration helper.
 
 ## SemVer impact
 
-Additive and backward-compatible → **minor**. The legacy `get` keeps its exact
-behavior; no existing call site needs to change.
+Removing `ADConnection.get` is **breaking** → **major** (shipped under #28). `get_v2` itself was
+introduced additively in #26 (minor); after #28 it is the only single-object read.

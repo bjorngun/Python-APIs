@@ -19,9 +19,36 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## Unreleased
 
+### Breaking Changes
+
+- **AD layer is now strict-only (issue #28, `semver:major`).** ADR 0001 Stage N+2 cleanup: the
+  compatibility-mode system and all legacy mirror behavior have been removed. See
+  `docs/migration/v-major-upgrade.md` for a full before/after upgrade guide.
+- Removed `ADConnection.get()` (the empty-string `defaultdict` read). Use
+  `ADConnection.get_v2()` → `ADGetResult` instead.
+- Removed the `result` and `message` legacy mirror keys from `ADOperationEnvelope`. Read
+  `ldap_result` and `exception_message` instead. `ADOperationEnvelope.to_response()` no longer
+  takes a `mode` argument and always emits the strict payload (equal to `to_dict()`).
+- AD write methods (`enable_user`, `disable_user`, `add_member`, `remove_member`,
+  `move_user_to_ou`, `modify_user`, `set_password`, `create_user`, `rename_user_cn`,
+  `modify_group`, `modify_ou`) now **always** return the strict envelope (no `result`/`message`
+  keys); the previous default raw-dict return is gone.
+- Removed the `compatibility_mode` parameter from every AD service constructor and method, plus
+  the `_resolve_effective_mode`/`get_compatibility_mode` helpers and `ADConnection.compatibility_mode`.
+- Removed mode infrastructure: `AD_COMPATIBILITY_MODES`, `AD_DEFAULT_COMPATIBILITY_MODE`,
+  `AD_COMPATIBILITY_ENV_VAR`, `resolve_ad_compatibility_mode`, `resolve_service_compatibility_mode`,
+  and `ADCompatibilityMode`. The `PYTHON_APIS_AD_COMPAT_MODE` environment variable is no longer read.
+  `python_apis.services.compatibility_mode` now exports only the strict-only
+  `finalize_ad_write_response`/`finalize_ad_read_response` (no `effective_mode` parameter).
+- Removed the `compatibility-modes` discovery capability and the `active_compatibility_mode` /
+  `describe_compatibility_modes` introspection helpers, and dropped the
+  `compatibility_mode_selection` migration example.
+- Read methods keep their historic typed return values; only the `compatibility_mode` parameter
+  was removed.
+
 ### Added
 
-- In-package discoverability toolkit for the modernized AD surface (issue #27): `python_apis.discovery` (capability registry via `list_capabilities`/`get_capability`, compatibility-mode introspection via `active_compatibility_mode`/`describe_compatibility_modes`, and a printable `quick_reference`), `python_apis.deprecation` (`warn_legacy` structured migration warnings, now emitted by legacy `ADConnection.get`), and `python_apis.migration_examples` (connection-free before/after snippets). All additive (`semver:minor`).
+- In-package discoverability toolkit for the modernized AD surface (issue #27): `python_apis.discovery` (capability registry via `list_capabilities`/`get_capability` and a printable `quick_reference`), `python_apis.deprecation` (`warn_legacy` structured migration warnings), and `python_apis.migration_examples` (connection-free before/after snippets). All additive (`semver:minor`).
 - rename_user_cn functionality to ADUserService for renaming user common names
 - Python 3.14 support and optimized CI/CD workflows  
 - Comprehensive test coverage (100% function coverage with 48 tests)
@@ -30,22 +57,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - 8 new unit tests for reconnect behaviour (64 total tests)
 - Repository planning and PR workflow skills: `plan-issue`, `pr-create`, and `pr-comments`
 - PR template and contributor guidance for SemVer labeling and task-bounded commit workflow
-- AD compatibility mode framework with `legacy`, `mixed`, and `strict` modes, including:
-  global/env resolution (`PYTHON_APIS_AD_COMPAT_MODE`), service defaults, per-call overrides,
-  and runtime introspection helpers for AD services and ADConnection
-- Expanded compatibility-mode coverage across AD API and service tests
 - Typed, dict-compatible AD response models (`ADResponse`, `ADOperationResponse`, `ADEntry`,
   `ADSearchResponse`) with legacy-key parity, lossless `from_legacy`/`to_dict` adapters, and JSON
   serialization (additive, non-breaking; exported from `python_apis.models`)
 - Contract tests pinning AD response model field names, types, dict-compatibility, and JSON
   serializability
-- AD operation envelope (`ADOperationEnvelope`) for service write operations with
-  compatibility-mode-driven legacy key mirroring (`success`/`result`/`message`), modern fields
-  (`operation_kind`, `ldap_result`, `exception_type`/`exception_message`, `request_context`), and
-  forward-compatible defaults (`error_code`, `retry_count`, `retried`); wired into
-  `ADUserService`, `ADGroupService`, and `ADOrganizationalUnitService` write ops with optional
-  per-call `compatibility_mode` overrides (additive, non-breaking; `legacy` returns the historic
-  dict unchanged, `mixed` mirrors legacy keys, `strict` omits them)
+- AD operation envelope (`ADOperationEnvelope`) for service write operations with modern fields
+  (`success`, `operation_kind`, `ldap_result`, `exception_type`/`exception_message`,
+  `request_context`) and `error_code`/`retry_count`/`retried` metadata; wired into
+  `ADUserService`, `ADGroupService`, and `ADOrganizationalUnitService` write ops
 - Service-layer envelope contract tests across user/group/OU write operations
 - Migration guide for the AD operation envelope (`docs/migration/ad-operation-envelope.md`)
 - Normalized AD error taxonomy (`python_apis.services.error_taxonomy`) with eight canonical,
@@ -54,19 +74,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   pure mapping utilities (`map_exception_to_error_code`, `map_ldap_result_to_error_code`,
   `resolve_error_code`) that classify ldap3/`pydantic` exceptions and LDAP result states, with a
   deterministic `AD_UNKNOWN` fallback
-- Automatic population of `ADOperationEnvelope.error_code` for AD write operations in `mixed`/`strict`
-  compatibility modes (`legacy` responses remain byte-for-byte unchanged; successful ops carry
-  `error_code = None`)
+- Automatic population of `ADOperationEnvelope.error_code` for AD write operations (successful ops
+  carry `error_code = None`)
 - Unit tests for the AD error taxonomy and its service-layer integration
-- Retry telemetry and policy metadata on AD responses (issue #21): `ADOperationEnvelope` now carries
-  `would_retry`, `retry_policy`, and a `did_retry` mirror (alongside the existing `retry_count`/
-  `retried`), surfaced in `mixed`/`strict` modes (`legacy` responses remain byte-for-byte unchanged)
+- Retry telemetry and policy metadata on AD responses (issue #21): `ADOperationEnvelope` carries
+  `would_retry`, `retry_policy`, and a `did_retry` mirror alongside `retry_count`/`retried`
 - `RetryTelemetry` dataclass plus `AD_READ_RETRY_POLICY`/`AD_WRITE_RETRY_POLICY` policy constants and
   `ADConnection.last_retry_telemetry`, capturing per-operation retry outcome (operation kind, attempt
   count, retried/would-retry/recovered, policy) for the auto-reconnect path (read/write classified)
 - `finalize_ad_read_response` opt-in helper for structured AD read reporting and retry-telemetry
-  threading into AD write finalization across user/group/OU services (default read return types and
-  `legacy` behavior unchanged)
+  threading into AD write finalization across user/group/OU services (default read return types
+  unchanged)
 - Unit tests for AD retry telemetry capture and read/write retry reporting
 - Membership APIs v2 on `ADGroupService` (issue #22): `get_user_direct_groups(user)` returning the
   user's direct group memberships (`list[ADGroup]` via `(&(objectClass=group)(member=<userDN>))`) and

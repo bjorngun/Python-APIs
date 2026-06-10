@@ -1,43 +1,15 @@
-"""Utilities for resolving AD compatibility mode in service layer code.
+"""Helpers for shaping AD service-layer responses into operation envelopes.
 
-This module centralizes mode resolution for AD services while reusing the
-contract defined in ``python_apis.apis.ad_api``.
+Since the Stage 3 breaking cleanup, AD services always emit strict
+:class:`ADOperationEnvelope` responses. There is no compatibility-mode
+selection: the legacy raw-dict and mixed-mirror shapes have been removed.
 """
 
-from typing import Any, Literal, cast
+from typing import Any
 
-from python_apis.apis.ad_api import (
-    AD_COMPATIBILITY_ENV_VAR,
-    AD_COMPATIBILITY_MODES,
-    AD_DEFAULT_COMPATIBILITY_MODE,
-    RetryTelemetry,
-    resolve_ad_compatibility_mode,
-)
+from python_apis.apis.ad_api import RetryTelemetry
 from python_apis.models import ADOperationEnvelope
 from python_apis.services.error_taxonomy import resolve_error_code
-
-ADCompatibilityMode = Literal["legacy", "mixed", "strict"]
-
-
-def resolve_service_compatibility_mode(
-    per_call_mode: str | None = None,
-    service_mode: str | None = None,
-    env_mode: str | None = None,
-) -> ADCompatibilityMode:
-    """Resolve effective AD compatibility mode for service-layer operations.
-
-    Precedence is ``per_call_mode`` -> ``service_mode`` -> environment
-    (``PYTHON_APIS_AD_COMPAT_MODE``) -> ``legacy`` fallback.
-    """
-
-    return cast(
-        ADCompatibilityMode,
-        resolve_ad_compatibility_mode(
-            per_call_mode=per_call_mode,
-            service_mode=service_mode,
-            env_mode=env_mode,
-        ),
-    )
 
 
 def _retry_envelope_kwargs(retry_telemetry: RetryTelemetry | None) -> dict[str, Any]:
@@ -60,28 +32,23 @@ def _retry_envelope_kwargs(retry_telemetry: RetryTelemetry | None) -> dict[str, 
 def finalize_ad_write_response(
     legacy_response: dict[str, Any],
     *,
-    effective_mode: str,
     exception: BaseException | None = None,
     retry_telemetry: RetryTelemetry | None = None,
 ) -> dict[str, Any]:
-    """Shape an AD write-operation response for the effective compatibility mode.
+    """Shape an AD write-operation response as a strict operation envelope.
 
-    In ``legacy`` mode the original response dict is returned unchanged to
-    preserve pre-modernization behavior (the non-breaking Stage N default). In
-    ``mixed`` and ``strict`` modes an :class:`ADOperationEnvelope` is emitted:
-    ``mixed`` mirrors the legacy keys (``success``, ``result``, ``message``)
-    while ``strict`` omits them. Operation-specific extras (for example ``dn``
-    or ``changes``) are preserved as top-level keys and captured in
+    A strict :class:`ADOperationEnvelope` is always emitted. ``success`` remains
+    a standard envelope field, but the removed legacy mirror keys (``result``
+    and ``message``, which mirrored ``ldap_result`` and ``exception_message``)
+    are not included. Operation-specific extras (for example ``dn`` or
+    ``changes``) are preserved as top-level keys and captured in
     ``request_context``.
 
     When ``retry_telemetry`` is provided (typically
     ``ADConnection.last_retry_telemetry`` captured immediately after the
     operation), its retry counters and policy metadata are surfaced on the
-    envelope; ``legacy`` mode output is unaffected.
+    envelope.
     """
-
-    if effective_mode == "legacy":
-        return legacy_response
 
     extras = {
         key: value
@@ -101,40 +68,34 @@ def finalize_ad_write_response(
         success=success,
         ldap_result=legacy_response.get("result"),
         exception=exception,
-        request_context={**extras, "compatibility_mode": effective_mode},
+        request_context=dict(extras),
         error_code=error_code,
         **_retry_envelope_kwargs(retry_telemetry),
     )
-    payload = envelope.to_response(effective_mode)
+    payload = envelope.to_response()
     for key, value in extras.items():
         payload.setdefault(key, value)
     return payload
 
 
-def finalize_ad_read_response(  # pylint: disable=too-many-arguments
+def finalize_ad_read_response(
     read_result: Any,
     *,
-    effective_mode: str,
     success: bool | None = None,
     exception: BaseException | None = None,
     retry_telemetry: RetryTelemetry | None = None,
     request_context: dict[str, Any] | None = None,
 ) -> Any:
-    """Optionally wrap an AD read outcome in an operation envelope.
+    """Wrap an AD read outcome in a strict operation envelope.
 
     This helper is opt-in: default read service methods keep returning their
-    historic value (for example ``list[ADUser]``). In ``legacy`` mode the raw
-    ``read_result`` is returned unchanged (non-breaking, mirroring
-    :func:`finalize_ad_write_response`). In ``mixed`` and ``strict`` modes an
+    historic value (for example ``list[ADUser]``). When used, a strict
     :class:`ADOperationEnvelope` with ``operation_kind="read"`` is built, with
     ``read_result`` exposed as ``ldap_result`` and any captured
     ``retry_telemetry`` surfaced as retry metadata.
 
     ``success`` defaults to ``exception is None`` when not supplied.
     """
-
-    if effective_mode == "legacy":
-        return read_result
 
     if success is None:
         success = exception is None
@@ -144,7 +105,6 @@ def finalize_ad_read_response(  # pylint: disable=too-many-arguments
         success=success,
     )
     context = dict(request_context or {})
-    context["compatibility_mode"] = effective_mode
     envelope = ADOperationEnvelope.from_operation(
         operation_kind="read",
         success=success,
@@ -154,15 +114,10 @@ def finalize_ad_read_response(  # pylint: disable=too-many-arguments
         error_code=error_code,
         **_retry_envelope_kwargs(retry_telemetry),
     )
-    return envelope.to_response(effective_mode)
+    return envelope.to_response()
 
 
 __all__ = [
-    "ADCompatibilityMode",
-    "AD_COMPATIBILITY_MODES",
-    "AD_DEFAULT_COMPATIBILITY_MODE",
-    "AD_COMPATIBILITY_ENV_VAR",
-    "resolve_service_compatibility_mode",
     "finalize_ad_write_response",
     "finalize_ad_read_response",
 ]

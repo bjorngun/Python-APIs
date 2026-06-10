@@ -217,27 +217,16 @@ class TestResolveErrorCode(unittest.TestCase):
 class TestServiceIntegration(unittest.TestCase):
     """Validate error_code wiring through finalize_ad_write_response."""
 
-    def test_legacy_mode_unchanged(self):
-        legacy = {"success": False, "result": "x"}
-
-        result = finalize_ad_write_response(
-            dict(legacy), effective_mode="legacy"
-        )
-
-        self.assertEqual(result, legacy)
-        self.assertNotIn("error_code", result)
-
     def test_strict_success_has_none_error_code(self):
         result = finalize_ad_write_response(
-            {"success": True, "result": "ok"}, effective_mode="strict"
+            {"success": True, "result": "ok"}
         )
 
         self.assertIsNone(result["error_code"])
 
-    def test_mixed_failure_with_exception_populates_error_code(self):
+    def test_failure_with_exception_populates_error_code(self):
         result = finalize_ad_write_response(
             {"success": False, "result": "denied"},
-            effective_mode="mixed",
             exception=LDAPInsufficientAccessRightsResult(),
         )
 
@@ -245,15 +234,14 @@ class TestServiceIntegration(unittest.TestCase):
 
     def test_strict_failure_with_result_code_populates_error_code(self):
         result = finalize_ad_write_response(
-            {"success": False, "result": 49}, effective_mode="strict"
+            {"success": False, "result": 49}
         )
 
         self.assertEqual(result["error_code"], AD_AUTH_ERROR)
 
-    def test_conflict_exception_maps_in_mixed_mode(self):
+    def test_conflict_exception_maps_to_error_code(self):
         result = finalize_ad_write_response(
             {"success": False, "result": "exists"},
-            effective_mode="mixed",
             exception=LDAPEntryAlreadyExistsResult(),
         )
 
@@ -267,7 +255,6 @@ class TestServiceIntegration(unittest.TestCase):
                 "result": {"create": 0, "password": 49},
                 "dn": "CN=x,OU=y",
             },
-            effective_mode="strict",
         )
 
         self.assertEqual(result["error_code"], AD_AUTH_ERROR)

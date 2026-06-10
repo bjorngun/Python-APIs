@@ -1,8 +1,14 @@
 # ADR 0001: AD Response Modernization and Compatibility Policy
 
-- Status: Accepted
+- Status: Accepted (Stage N+2 executed under #28)
 - Date: 2026-06-08
 - Related issue: #16
+
+> **Stage N+2 update (Issue #28, `semver:major`):** The compatibility-mode system and legacy
+> mirror surface described below have been **removed**. The AD layer is now strict-only. The
+> `legacy`/`mixed`/`strict` mode tables and legacy-mirroring rules are retained as historical
+> record of the rollout policy; see [Stage N+2 Execution](#stage-n2-execution-issue-28) for the
+> current end state and the upgrade guide at `docs/migration/v-major-upgrade.md`.
 
 ## Context
 
@@ -190,6 +196,39 @@ The following issues define implementation sequencing for this ADR.
 
 This mapping is sequencing guidance, not a hard gate matrix. If scope changes, update this ADR and
 the linked issue set in the same PR.
+
+## Stage N+2 Execution (Issue #28)
+
+Stage N+2 has been executed as a single `semver:major` breaking change. The compatibility-first
+rollout has reached its terminal state: the AD layer is now **strict-only** and all legacy
+compatibility scaffolding has been removed.
+
+Removed in this stage:
+
+- **Legacy mirror keys**: `ADOperationEnvelope` no longer exposes the computed `result` and
+  `message` mirrors. Modern fields only (`success`, `ldap_result`, `exception_type`,
+  `exception_message`, `error_code`, retry telemetry, `request_context`).
+- **`to_response(mode)`**: now `to_response()` with no argument; always emits the strict payload
+  (equivalent to `to_dict()` / `model_dump()`).
+- **Compatibility modes**: the `legacy`/`mixed`/`strict` mode system is gone — constants
+  (`AD_COMPATIBILITY_MODES`, `AD_DEFAULT_COMPATIBILITY_MODE`, `AD_COMPATIBILITY_ENV_VAR`),
+  resolvers (`resolve_ad_compatibility_mode`, `resolve_service_compatibility_mode`), the
+  `ADCompatibilityMode` type, the `compatibility_mode` constructor/method parameters on all AD
+  services, and `ADConnection.compatibility_mode` no longer exist.
+- **`ADConnection.get()`**: the empty-string `defaultdict` read is removed; `get_v2()` returning
+  an `ADGetResult` typed not-found contract is the single canonical single-object read.
+- **Discoverability**: the `compatibility-modes` capability and the `active_compatibility_mode` /
+  `describe_compatibility_modes` introspection helpers were removed from the discovery toolkit,
+  and the `compatibility_mode_selection` migration example was removed.
+
+Result:
+
+- AD **write** methods always return the strict `ADOperationEnvelope` payload.
+- AD **read** methods keep their historic typed return values (`list[ADUser]`,
+  `ADBatchReadResult`, `ADMembersPage`, etc.); reads are never silently wrapped in an envelope.
+
+Migration: see `docs/migration/v-major-upgrade.md` for before/after snippets covering every
+affected path.
 
 ## Migration Guidance Requirements
 

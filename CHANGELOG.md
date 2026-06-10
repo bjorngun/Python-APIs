@@ -105,6 +105,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Contract tests for the batch read v2 APIs (all-success/all-failure/mixed/empty and unchanged
   list-method signatures) and a canonical usage example (`examples/batch_read_v2.py`) plus migration
   guide (`docs/migration/ad-batch-read-v2.md`)
+- Multivalue dual-form support for AD attributes (issue #25): `ADMultiValue` exposes the `raw` source
+  value (preserved verbatim), a deterministically `normalized` `list[str]` (`values`), and
+  `metadata` (`ADMultiValueMetadata` with `source`/`normalized`/`count`/`delimiter`), plus an
+  `as_legacy_string()` accessor that reproduces the historic comma-joined string during the
+  transition. A pure `normalize_multivalue(raw, *, delimiter=",")` helper implements the documented
+  deterministic normalization rules. Existing schema field types and their comma-joining behavior are
+  unchanged (additive, backward-compatible; exported from `python_apis.models`)
+- Contract tests for the multivalue dual-form (normalization rules, determinism, legacy-accessor
+  parity, shape invariants), a migration guide documenting the normalization rules
+  (`docs/migration/ad-multivalue-dual-form.md`), and a usage example
+  (`examples/multivalue_dual_form.py`)
 
 ### Fixed
 

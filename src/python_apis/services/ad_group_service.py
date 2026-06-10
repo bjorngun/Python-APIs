@@ -21,6 +21,10 @@ from python_apis.services.compatibility_mode import (
     resolve_service_compatibility_mode,
 )
 
+# AD matching rule OID for transitive (nested) membership evaluation.
+# Filtering ``member`` with this rule walks the full membership chain.
+LDAP_MATCHING_RULE_IN_CHAIN = "1.2.840.113556.1.4.1941"
+
 class ADGroupService:
     """Service class for interacting with Active Directory groups.
 
@@ -304,6 +308,47 @@ class ADGroupService:
         search_filter = f"(&(objectClass=group)(objectSid={escaped_sid}))"
         groups = self._groups_from_search(search_filter)
         return groups[0] if groups else None
+
+    def get_user_transitive_groups(
+        self,
+        user: ADUser | str,
+        compatibility_mode: str | None = None,
+    ) -> list[ADGroup]:
+        """Return all groups a user belongs to, including nested memberships.
+
+        Unlike :meth:`get_user_direct_groups` (direct memberships only), this
+        resolves the full membership chain using the AD matching rule
+        ``LDAP_MATCHING_RULE_IN_CHAIN`` (OID ``1.2.840.113556.1.4.1941``):
+        ``(member:1.2.840.113556.1.4.1941:=<userDN>)``. Results are sorted by
+        ``distinguishedName`` so repeated calls are deterministic. Note that a
+        user's *primary* group is not part of the ``member`` chain; use
+        :meth:`resolve_primary_group` for that.
+
+        Args:
+            user (ADUser | str): The user, or the user's distinguishedName.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override (accepted for API symmetry; reads return typed models).
+
+        Returns:
+            list[ADGroup]: All (direct and nested) group memberships, ordered by
+            ``distinguishedName`` (empty list if none).
+        """
+
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_user_transitive_groups", effective_mode
+        )
+
+        user_dn = user.distinguishedName if isinstance(user, ADUser) else user
+        if not user_dn:
+            return []
+
+        escaped_dn = escape_filter_chars(str(user_dn))
+        search_filter = (
+            f"(&(objectClass=group)(member:{LDAP_MATCHING_RULE_IN_CHAIN}:={escaped_dn}))"
+        )
+        groups = self._groups_from_search(search_filter)
+        return sorted(groups, key=lambda group: group.distinguishedName or "")
 
     def modify_group(
         self,

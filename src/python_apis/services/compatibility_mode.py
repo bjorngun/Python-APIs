@@ -37,10 +37,12 @@ def finalize_ad_write_response(
 ) -> dict[str, Any]:
     """Shape an AD write-operation response as a strict operation envelope.
 
-    A strict :class:`ADOperationEnvelope` is always emitted; the legacy mirror
-    keys (``success``, ``result``, ``message``) are not included.
-    Operation-specific extras (for example ``dn`` or ``changes``) are preserved
-    as top-level keys and captured in ``request_context``.
+    A strict :class:`ADOperationEnvelope` is always emitted. ``success`` remains
+    a standard envelope field, but the removed legacy mirror keys (``result``
+    and ``message``, which mirrored ``ldap_result`` and ``exception_message``)
+    are not included. Operation-specific extras (for example ``dn`` or
+    ``changes``) are preserved as top-level keys and captured in
+    ``request_context``.
 
     When ``retry_telemetry`` is provided (typically
     ``ADConnection.last_retry_telemetry`` captured immediately after the

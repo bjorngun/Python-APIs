@@ -83,20 +83,6 @@ def error_handling_with_taxonomy() -> str:
     )
 
 
-def compatibility_mode_selection() -> str:
-    """Choosing and inspecting the active AD compatibility mode."""
-
-    return (
-        "# Inspect the active mode and how it was resolved\n"
-        "from python_apis import discovery\n"
-        "info = discovery.describe_compatibility_modes()\n"
-        "print(info['active_mode'], 'from', info['env_var'])\n"
-        "\n"
-        "# Opt a single call into a stricter modern shape\n"
-        "service.get_users_from_ad_v2(compatibility_mode='strict')"
-    )
-
-
 def all_examples() -> dict[str, str]:
     """Return every migration snippet keyed by a stable identifier."""
 
@@ -105,7 +91,6 @@ def all_examples() -> dict[str, str]:
         "list_read_to_batch_v2": list_read_to_batch_v2(),
         "raw_multivalue_to_dual_form": raw_multivalue_to_dual_form(),
         "error_handling_with_taxonomy": error_handling_with_taxonomy(),
-        "compatibility_mode_selection": compatibility_mode_selection(),
     }
 
 
@@ -123,7 +108,6 @@ __all__ = [
     "list_read_to_batch_v2",
     "raw_multivalue_to_dual_form",
     "error_handling_with_taxonomy",
-    "compatibility_mode_selection",
     "all_examples",
     "print_all",
 ]

@@ -9,8 +9,6 @@ It provides:
 * A runtime **capability registry** describing each modernized behavior, its
   public entry points, and its legacy-to-v2 migration note
   (:func:`list_capabilities`, :func:`get_capability`).
-* **Compatibility-mode introspection** (:func:`active_compatibility_mode`,
-  :func:`describe_compatibility_modes`).
 * A printable **quick reference** cheat sheet (:func:`quick_reference`,
   :func:`print_quick_reference`).
 
@@ -19,8 +17,6 @@ needs no AD connection and adds no new dependencies.
 
 Example:
     >>> from python_apis import discovery
-    >>> discovery.active_compatibility_mode()
-    'legacy'
     >>> names = [cap["name"] for cap in discovery.list_capabilities()]
     >>> "get-v2" in names
     True
@@ -28,13 +24,6 @@ Example:
 
 from dataclasses import dataclass
 from typing import Any
-
-from python_apis.apis import (
-    AD_COMPATIBILITY_ENV_VAR,
-    AD_COMPATIBILITY_MODES,
-    AD_DEFAULT_COMPATIBILITY_MODE,
-    resolve_ad_compatibility_mode,
-)
 
 
 @dataclass(frozen=True)
@@ -77,29 +66,10 @@ class Capability:
 
 AD_CAPABILITIES: tuple[Capability, ...] = (
     Capability(
-        name="compatibility-modes",
-        summary=(
-            "Select legacy/mixed/strict AD response shape via per-call, service, "
-            "or environment configuration."
-        ),
-        since_issue=18,
-        entry_points=(
-            "python_apis.apis:resolve_ad_compatibility_mode",
-            "python_apis.services:resolve_service_compatibility_mode",
-            "python_apis.apis:AD_COMPATIBILITY_MODES",
-        ),
-        legacy=None,
-        migration=(
-            "Set PYTHON_APIS_AD_COMPAT_MODE or pass compatibility_mode= to opt into "
-            "modern response fields; 'legacy' keeps historic behavior."
-        ),
-        example="python_apis.discovery.describe_compatibility_modes()",
-    ),
-    Capability(
         name="operation-envelope",
         summary=(
-            "Typed, dict-compatible AD operation/response envelope that mirrors "
-            "legacy keys while adding structured metadata."
+            "Typed, dict-compatible AD operation envelope exposing structured "
+            "metadata (strict-only since the Stage 3 cleanup)."
         ),
         since_issue=19,
         entry_points=(
@@ -108,8 +78,8 @@ AD_CAPABILITIES: tuple[Capability, ...] = (
         ),
         legacy="dict with 'success'/'result'/'message' keys",
         migration=(
-            "Modern fields are additive; existing response['success'] / "
-            "response.get('result') access keeps working."
+            "AD writes now return a strict ADOperationEnvelope; read 'ldap_result' "
+            "and 'error_code' instead of the removed 'result'/'message' keys."
         ),
         example="docs/migration/ad-operation-envelope.md",
     ),
@@ -194,10 +164,10 @@ AD_CAPABILITIES: tuple[Capability, ...] = (
             "python_apis.apis:ADConnection.get_v2",
             "python_apis.models:ADGetResult",
         ),
-        legacy="python_apis.apis:ADConnection.get",
+        legacy="ADConnection.get (removed in the Stage 3 cleanup)",
         migration=(
-            "Replace get(...) with get_v2(...) and branch on result.found instead "
-            "of probing an empty default mapping."
+            "Use get_v2(...) and branch on result.found instead of probing an "
+            "empty default mapping; the legacy get(...) no longer exists."
         ),
         example="examples/get_v2.py",
     ),
@@ -230,97 +200,16 @@ def get_capability(name: str) -> dict[str, Any]:
     raise KeyError(f"Unknown capability '{name}'. Available: {available}")
 
 
-@dataclass(frozen=True)
-class _ModeInfo:
-    """Human-readable description of a single compatibility mode."""
-
-    intent: str
-    legacy_keys: str
-    modern_fields: str
-
-
-_MODE_INFO: dict[str, _ModeInfo] = {
-    "legacy": _ModeInfo(
-        intent="Preserve pre-modernization behavior (default).",
-        legacy_keys="present",
-        modern_fields="not added",
-    ),
-    "mixed": _ModeInfo(
-        intent="Modern fields plus legacy mirrors for a safe transition.",
-        legacy_keys="mirrored",
-        modern_fields="present",
-    ),
-    "strict": _ModeInfo(
-        intent="Modern fields only; legacy mirrors omitted.",
-        legacy_keys="omitted",
-        modern_fields="present",
-    ),
-}
-
-
-def active_compatibility_mode(
-    per_call_mode: str | None = None,
-    service_mode: str | None = None,
-) -> str:
-    """Return the effective AD compatibility mode for the current context.
-
-    Delegates to :func:`python_apis.apis.resolve_ad_compatibility_mode`, so the
-    precedence is ``per_call_mode`` -> ``service_mode`` -> environment variable
-    (``PYTHON_APIS_AD_COMPAT_MODE``) -> ``legacy``.
-
-    Args:
-        per_call_mode: Optional explicit override for this query.
-        service_mode: Optional service default to consider.
-
-    Returns:
-        One of ``"legacy"``, ``"mixed"``, or ``"strict"``.
-    """
-
-    return resolve_ad_compatibility_mode(
-        per_call_mode=per_call_mode,
-        service_mode=service_mode,
-    )
-
-
-def describe_compatibility_modes() -> dict[str, Any]:
-    """Return a structured description of the AD compatibility modes.
-
-    Returns:
-        A dict with the env var name, default mode, the active mode, and a
-        per-mode description of intent and legacy/modern field handling.
-    """
-
-    return {
-        "env_var": AD_COMPATIBILITY_ENV_VAR,
-        "default_mode": AD_DEFAULT_COMPATIBILITY_MODE,
-        "active_mode": active_compatibility_mode(),
-        "modes": {
-            mode: {
-                "intent": info.intent,
-                "legacy_keys": info.legacy_keys,
-                "modern_fields": info.modern_fields,
-            }
-            for mode, info in _MODE_INFO.items()
-        },
-    }
-
-
 def quick_reference() -> str:
     """Return a printable cheat sheet for the modernized AD behaviors.
 
-    The string names the compatibility modes and env var, the active mode, and
-    each capability with its primary entry point and migration note, so the
-    whole surface is discoverable from a single REPL call.
+    The string lists each capability with its primary entry point and migration
+    note, so the whole surface is discoverable from a single REPL call.
     """
 
     lines: list[str] = [
         "python_apis - AD modernization quick reference",
         "=" * 46,
-        "",
-        f"Compatibility env var : {AD_COMPATIBILITY_ENV_VAR}",
-        f"Modes                 : {', '.join(AD_COMPATIBILITY_MODES)} "
-        f"(default: {AD_DEFAULT_COMPATIBILITY_MODE})",
-        f"Active mode           : {active_compatibility_mode()}",
         "",
         "Capabilities (legacy -> v2):",
     ]
@@ -334,8 +223,8 @@ def quick_reference() -> str:
         lines.append(f"      hint   : {capability.migration}")
     lines.append("")
     lines.append(
-        "Discover more: python_apis.discovery.list_capabilities(), "
-        "describe_compatibility_modes(); python_apis.migration_examples.print_all()."
+        "Discover more: python_apis.discovery.list_capabilities(); "
+        "python_apis.migration_examples.print_all()."
     )
     return "\n".join(lines)
 
@@ -351,8 +240,6 @@ __all__ = [
     "AD_CAPABILITIES",
     "list_capabilities",
     "get_capability",
-    "active_compatibility_mode",
-    "describe_compatibility_modes",
     "quick_reference",
     "print_quick_reference",
 ]

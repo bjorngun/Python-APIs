@@ -7,6 +7,31 @@ on:
     branches: [main]
 
 jobs:
+  validate-semver-label:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - name: Require exactly one SemVer label
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+
+        semver_labels=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels \
+          --jq '.labels[].name | select(startswith("semver:"))')
+
+        semver_count=$(printf '%s\n' "$semver_labels" | sed '/^$/d' | wc -l | tr -d ' ')
+        if [ "$semver_count" -ne 1 ]; then
+          echo "::error::PR #$PR_NUMBER must have exactly one SemVer label: semver:major, semver:minor, or semver:none."
+          echo "::error::Found ${semver_count} SemVer label(s): ${semver_labels:-<none>}"
+          echo "::error::See the Versioning and Release Flow section in README.md."
+          exit 1
+        fi
+
+        semver_label=$(printf '%s\n' "$semver_labels" | sed '/^$/d')
+        echo "PR #$PR_NUMBER has a valid SemVer label: $semver_label"
+
   check-links:
     runs-on: ubuntu-latest
     steps:

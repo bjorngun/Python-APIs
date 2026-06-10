@@ -71,7 +71,10 @@ def warn_legacy(  # pylint: disable=too-many-arguments
         migration_hint: A concrete, actionable migration hint.
         since: Optional version/issue marker for when ``legacy`` was superseded.
         category: Warning category to emit (default :class:`DeprecationWarning`).
-        stacklevel: Stack level so the warning points at the caller's call site.
+        stacklevel: Stack level passed through verbatim to :func:`warnings.warn`.
+            The default of ``2`` points the warning at the direct caller of
+            :func:`warn_legacy`; wrappers should increase it so the warning
+            points at their own external caller.
 
     Returns:
         The warning message that was emitted.
@@ -83,7 +86,7 @@ def warn_legacy(  # pylint: disable=too-many-arguments
         migration_hint=migration_hint,
         since=since,
     )
-    warnings.warn(message, category=category, stacklevel=stacklevel + 1)
+    warnings.warn(message, category=category, stacklevel=stacklevel)
     return message
 
 

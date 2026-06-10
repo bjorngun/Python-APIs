@@ -336,6 +336,7 @@ class ADConnection:
                 "Branch on ADGetResult.found instead of probing the empty default "
                 "mapping; see python_apis.discovery.get_capability('get-v2')."
             ),
+            stacklevel=3,
         )
         search_result = self.search(search_filter, attributes)
         return search_result[0] if len(search_result) > 0 else collections.defaultdict(lambda: '')

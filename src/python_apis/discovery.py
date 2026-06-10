@@ -1,8 +1,8 @@
 """In-package discoverability toolkit for modernized AD behavior (issue #27).
 
 This module lets users and agents understand the modernized, additive AD
-behaviors **from the Python REPL and IDE hints alone**, without visiting the
-GitHub docs under ``docs/migration/`` or ``docs/adr/``.
+behaviors **from the Python REPL and IDE hints alone**, without needing to
+visit the GitHub docs under ``docs/migration/`` or ``docs/adr/``.
 
 It provides:
 
@@ -45,7 +45,9 @@ class Capability:
         name: Stable short identifier (for example ``"get-v2"``).
         summary: One-sentence description of the behavior.
         since_issue: GitHub issue number that introduced the behavior.
-        entry_points: Importable public symbols (``module:Name`` form).
+        entry_points: Importable public symbols in ``module:attr`` form, where
+            ``attr`` may be a dotted path (for example
+            ``python_apis.services:ADGroupService.get_group_members``).
         legacy: Legacy API the behavior modernizes, or ``None`` if net-new.
         migration: One-line legacy-to-v2 migration note.
         example: Reference to a runnable example (repo path or in-package func).
@@ -131,7 +133,9 @@ AD_CAPABILITIES: tuple[Capability, ...] = (
         summary="Transitive group membership and paged group-member reads.",
         since_issue=22,
         entry_points=(
+            "python_apis.services:ADGroupService.get_user_direct_groups",
             "python_apis.services:ADGroupService.get_user_transitive_groups",
+            "python_apis.services:ADGroupService.resolve_primary_group",
             "python_apis.services:ADGroupService.get_group_members",
             "python_apis.models:ADMembersPage",
         ),

@@ -51,8 +51,8 @@ def raw_multivalue_to_dual_form() -> str:
     """Migrating ad-hoc multi-value parsing to ``normalize_multivalue``."""
 
     return (
-        "# Legacy: manual split on a delimiter, lossy for binary values\n"
-        "groups = raw['memberOf'].split(';') if raw.get('memberOf') else []\n"
+        "# Legacy: manual comma-split, lossy for binary values\n"
+        "groups = raw['memberOf'].split(',') if raw.get('memberOf') else []\n"
         "\n"
         "# Modern: dual-form values keep both list and legacy string\n"
         "from python_apis.models import normalize_multivalue\n"
@@ -69,7 +69,7 @@ def error_handling_with_taxonomy() -> str:
         "# Legacy: stringly-typed, ad-hoc exception branching\n"
         "try:\n"
         "    conn.add(...)\n"
-        "except Exception as exc:  # noqa: BLE001\n"
+        "except Exception as exc:\n"
         "    if 'already exists' in str(exc):\n"
         "        ...\n"
         "\n"
@@ -77,7 +77,7 @@ def error_handling_with_taxonomy() -> str:
         "from python_apis.services.error_taxonomy import map_exception_to_error_code\n"
         "try:\n"
         "    conn.add(...)\n"
-        "except Exception as exc:  # noqa: BLE001\n"
+        "except Exception as exc:\n"
         "    code = map_exception_to_error_code(exc)\n"
         "    handle(code)"
     )

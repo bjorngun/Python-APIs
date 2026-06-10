@@ -86,7 +86,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   paging (`page_size`/`offset`) and an optional `max_members` cap; both accept an `ADUser`/`ADGroup`
   or distinguishedName string and escape LDAP filter values (additive, backward-compatible)
 - `ADMembersPage` typed paged response model (exported from `python_apis.models`) and
-  `ADConnection.get_ranged_attribute` for LDAP ranged multi-valued attribute retrieval
+  `ADConnection.get_ranged_attribute` for LDAP ranged multi-valued attribute retrieval, with an
+  optional `limit` to early-stop range reads (so `max_members` bounds LDAP traffic on large groups)
+  and resilience to empty ranged echoes returned alongside the real bounded range
 - Contract tests for transitive group resolution, paged group member retrieval, and ranged-attribute
   assembly
 - Canonical membership API usage example (`examples/membership_apis.py`)

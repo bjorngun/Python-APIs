@@ -325,6 +325,12 @@ class ADConnection:
             if key != attribute and not key.startswith(f"{attribute};range="):
                 continue
             values = value if isinstance(value, list) else [value]
+            if not values:
+                # AD may echo the requested range back as an empty attribute
+                # (for example ``member;range=0-*``) alongside the real bounded
+                # range (``member;range=0-1499``). Skip empty echoes so the
+                # non-empty range drives assembly instead of stopping early.
+                continue
             if ";range=" not in key:
                 return values, None
             high = key.rsplit("-", 1)[-1]
@@ -334,7 +340,12 @@ class ADConnection:
         return [], None
 
     @_auto_reconnect("read")
-    def get_ranged_attribute(self, distinguished_name: str, attribute: str) -> list[str]:
+    def get_ranged_attribute(
+        self,
+        distinguished_name: str,
+        attribute: str,
+        limit: int | None = None,
+    ) -> list[str]:
         """Retrieve all values of a multi-valued attribute via LDAP ranged reads.
 
         Active Directory caps how many values of a multi-valued attribute (for
@@ -347,9 +358,15 @@ class ADConnection:
         Args:
             distinguished_name (str): DN of the object to read.
             attribute (str): The multi-valued attribute to assemble.
+            limit (int | None): Optional early-stop bound. When provided, range
+                reads stop as soon as at least ``limit`` values are collected and
+                the result is truncated to ``limit``; this avoids unbounded LDAP
+                traffic/memory for very large attributes when the caller only
+                needs a bounded number of values. ``None`` reads every range.
 
         Returns:
-            list[str]: All values of ``attribute`` across every range.
+            list[str]: Values of ``attribute`` in server order (at most ``limit``
+            when ``limit`` is set).
         """
 
         values: list[str] = []
@@ -367,6 +384,8 @@ class ADConnection:
             entry_attributes = self.connection.response[0].get("attributes", {}) or {}
             chunk, next_start = self._parse_ranged_attribute(entry_attributes, attribute)
             values.extend(chunk)
+            if limit is not None and len(values) >= limit:
+                return values[:limit]
             if next_start is None:
                 break
             start = next_start

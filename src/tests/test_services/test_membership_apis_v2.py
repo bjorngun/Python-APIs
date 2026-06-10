@@ -137,7 +137,7 @@ class TestGroupMembers(unittest.TestCase):
         self.assertIsNone(page.page_info['next_offset'])
         # Reads the group's member attribute via ranged retrieval.
         self.mock_ad_connection.get_ranged_attribute.assert_called_once_with(
-            'CN=Team,DC=example,DC=com', 'member'
+            'CN=Team,DC=example,DC=com', 'member', limit=None
         )
 
     def test_members_accepts_adgroup_instance(self):
@@ -148,7 +148,7 @@ class TestGroupMembers(unittest.TestCase):
 
         self.assertEqual(page.total_count, 2)
         self.mock_ad_connection.get_ranged_attribute.assert_called_once_with(
-            'CN=Team,DC=example,DC=com', 'member'
+            'CN=Team,DC=example,DC=com', 'member', limit=None
         )
 
     def test_members_paging_returns_requested_slice(self):
@@ -197,6 +197,28 @@ class TestGroupMembers(unittest.TestCase):
         self.assertEqual(page.total_count, 3)
         self.assertEqual(len(page.members), 3)
 
+    def test_members_max_members_bounds_the_ranged_read(self):
+        self._set_members(10)
+
+        self.service.get_group_members(
+            'CN=Team,DC=example,DC=com', page_size=50, max_members=3
+        )
+
+        # The cap is pushed into the ranged read (one past the cap so truncation
+        # can still be detected) rather than fetching the whole membership.
+        self.mock_ad_connection.get_ranged_attribute.assert_called_once_with(
+            'CN=Team,DC=example,DC=com', 'member', limit=4
+        )
+
+    def test_members_no_cap_reads_every_range(self):
+        self._set_members(5)
+
+        self.service.get_group_members('CN=Team,DC=example,DC=com')
+
+        self.mock_ad_connection.get_ranged_attribute.assert_called_once_with(
+            'CN=Team,DC=example,DC=com', 'member', limit=None
+        )
+
     def test_members_offset_beyond_total_returns_empty_page(self):
         self._set_members(3)
 
@@ -215,6 +237,21 @@ class TestGroupMembers(unittest.TestCase):
         self.assertEqual(page.total_count, 0)
         self.assertFalse(page.truncated)
         self.mock_ad_connection.get_ranged_attribute.assert_not_called()
+
+    def test_members_missing_dn_page_info_is_consistently_shaped(self):
+        page = self.service.get_group_members(
+            ADGroup(distinguishedName=None, name='X'), page_size=25
+        )
+
+        # Paging callers must find the same keys here as on populated pages.
+        self.assertEqual(
+            set(page.page_info),
+            {'page_size', 'offset', 'next_offset', 'has_next_page'},
+        )
+        self.assertEqual(page.page_info['page_size'], 25)
+        self.assertEqual(page.page_info['offset'], 0)
+        self.assertIsNone(page.page_info['next_offset'])
+        self.assertFalse(page.page_info['has_next_page'])
 
 
 class TestRangedAttributeRetrieval(unittest.TestCase):
@@ -266,6 +303,14 @@ class TestRangedAttributeRetrieval(unittest.TestCase):
         self.assertEqual(values, [])
         self.assertIsNone(nxt)
 
+    def test_parse_ranged_attribute_skips_empty_echo(self):
+        # AD can echo the requested range back empty alongside the real range.
+        values, nxt = ADConnection._parse_ranged_attribute(  # pylint: disable=protected-access
+            {'member;range=0-*': [], 'member;range=0-1': ['CN=a', 'CN=b']}, 'member'
+        )
+        self.assertEqual(values, ['CN=a', 'CN=b'])
+        self.assertEqual(nxt, 2)
+
     def test_get_ranged_attribute_assembles_multiple_ranges(self):
         self._stub_ranges([
             {'member;range=0-1': ['CN=a', 'CN=b']},
@@ -287,6 +332,31 @@ class TestRangedAttributeRetrieval(unittest.TestCase):
 
         self.assertEqual(values, ['CN=a', 'CN=b'])
         self.assertEqual(self.connection.connection.search.call_count, 1)
+
+    def test_get_ranged_attribute_handles_empty_echo(self):
+        self._stub_ranges([
+            {'member;range=0-*': [], 'member;range=0-1': ['CN=a', 'CN=b']},
+            {'member;range=2-*': ['CN=c']},
+        ])
+
+        values = self.connection.get_ranged_attribute('CN=Team,DC=example,DC=com', 'member')
+
+        self.assertEqual(values, ['CN=a', 'CN=b', 'CN=c'])
+
+    def test_get_ranged_attribute_limit_stops_early(self):
+        self._stub_ranges([
+            {'member;range=0-1': ['CN=a', 'CN=b']},
+            {'member;range=2-3': ['CN=c', 'CN=d']},
+            {'member;range=4-*': ['CN=e']},
+        ])
+
+        values = self.connection.get_ranged_attribute(
+            'CN=Team,DC=example,DC=com', 'member', limit=3
+        )
+
+        # Stops after the cap is reached and trims to exactly ``limit``.
+        self.assertEqual(values, ['CN=a', 'CN=b', 'CN=c'])
+        self.assertEqual(self.connection.connection.search.call_count, 2)
 
     def test_get_ranged_attribute_absent_object_returns_empty(self):
         def search_side_effect(**_kwargs):

@@ -370,7 +370,10 @@ class ADGroupService:
         ``total_count`` is the number of members available for paging in this
         response. When ``max_members`` is set and the group has more members,
         the working set is capped to ``max_members`` and ``truncated`` is
-        ``True`` to signal that members beyond the cap were omitted.
+        ``True`` to signal that members beyond the cap were omitted. The cap is
+        pushed into the ranged read (:meth:`ADConnection.get_ranged_attribute`),
+        so an oversized group stops fetching ranges shortly after the cap is
+        reached rather than materializing the entire membership.
 
         Args:
             group (ADGroup | str): The group, or the group's distinguishedName.
@@ -394,9 +397,14 @@ class ADGroupService:
 
         group_dn = group.distinguishedName if isinstance(group, ADGroup) else group
         if not group_dn:
-            return ADMembersPage()
+            return ADMembersPage(page_info=self._members_page_info(page_size, 0, 0))
 
-        members = self.ad_connection.get_ranged_attribute(str(group_dn), "member")
+        # Read one past the cap so truncation can be detected while still
+        # bounding the ranged read for very large groups.
+        fetch_limit = max_members + 1 if max_members is not None and max_members >= 0 else None
+        members = self.ad_connection.get_ranged_attribute(
+            str(group_dn), "member", limit=fetch_limit
+        )
 
         truncated = max_members is not None and 0 <= max_members < len(members)
         if truncated:
@@ -410,13 +418,31 @@ class ADGroupService:
             members=members[start:end],
             total_count=total_count,
             truncated=truncated,
-            page_info={
-                "page_size": page_size,
-                "offset": start,
-                "next_offset": end if end < total_count else None,
-                "has_next_page": end < total_count,
-            },
+            page_info=self._members_page_info(page_size, start, end, total_count),
         )
+
+    @staticmethod
+    def _members_page_info(
+        page_size: int,
+        offset: int,
+        end: int,
+        total_count: int = 0,
+    ) -> dict[str, Any]:
+        """Build a consistently-shaped ``page_info`` mapping for member pages.
+
+        Always returns the same key surface (``page_size``, ``offset``,
+        ``next_offset``, ``has_next_page``) so callers following the paging
+        contract never hit a ``KeyError`` -- including the empty/missing-group
+        early-return path.
+        """
+
+        has_next_page = end < total_count
+        return {
+            "page_size": page_size,
+            "offset": offset,
+            "next_offset": end if has_next_page else None,
+            "has_next_page": has_next_page,
+        }
 
     def modify_group(
         self,

@@ -14,8 +14,9 @@ from pydantic import ValidationError
 
 from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
-from python_apis.models import ADOrganizationalUnit, base
+from python_apis.models import ADOrganizationalUnit, ADBatchReadResult, base
 from python_apis.schemas import ADOrganizationalUnitSchema
+from python_apis.services.batch_read import build_batch_read_result
 from python_apis.services.compatibility_mode import (
     finalize_ad_write_response,
     resolve_service_compatibility_mode,
@@ -245,6 +246,39 @@ class ADOrganizationalUnitService:
                 )
 
         return ad_ous
+
+    def get_ous_from_ad_v2(
+        self,
+        search_filter: str = '(objectClass=organizationalUnit)',
+        compatibility_mode: str | None = None,
+    ) -> ADBatchReadResult:
+        """Retrieve organizational units from AD as a batch result.
+
+        Unlike :meth:`get_ous_from_ad`, which silently drops records that fail
+        schema validation, this v2 method returns an :class:`ADBatchReadResult`
+        envelope exposing both successfully built OUs (``returned_items``) and
+        structured per-record failures (``failed_items``).
+
+        Args:
+            search_filter (str): LDAP search filter. Defaults to
+                ``'(objectClass=organizationalUnit)'``.
+            compatibility_mode (str | None): Optional compatibility mode override.
+
+        Returns:
+            ADBatchReadResult: Envelope of returned OUs and failed records.
+        """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_ous_from_ad_v2", effective_mode
+        )
+
+        attributes = ADOrganizationalUnit.get_attribute_list()
+        ad_ous_dict = self.ad_connection.search(search_filter, attributes)
+        return build_batch_read_result(
+            ad_ous_dict,
+            schema=ADOrganizationalUnitSchema,
+            model_factory=ADOrganizationalUnit,
+        )
 
     def modify_ou(
         self,

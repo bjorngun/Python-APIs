@@ -1,9 +1,56 @@
 # Migration Guide: AD Operation Envelope (Issue #19)
 
-> Status: Stage N (additive, non-breaking)
-> Related: [ADR 0001](../adr/0001-ad-response-modernization.md), issues #17, #18, #19
+> Status: **Superseded by Stage N+2 (Issue #28) — the AD layer is now strict-only.**
+> Related: [ADR 0001](../adr/0001-ad-response-modernization.md), issues #17, #18, #19, #28
 
-Issue #19 introduces a consistent **operation envelope** for AD service write
+> **⚠️ Stage N+2 update (Issue #28, `semver:major`):** Compatibility modes and the legacy
+> `result`/`message` mirror keys have been **removed**. AD write methods now **always** return the
+> strict envelope shown under [Current (strict-only) shape](#current-strict-only-shape). The
+> `compatibility_mode` parameter no longer exists on any service or method, and `request_context`
+> no longer contains a `compatibility_mode` key. The mode/mirror sections below are retained as
+> historical context only. For the full upgrade walkthrough see
+> [`v-major-upgrade.md`](v-major-upgrade.md).
+
+## Current (strict-only) shape
+
+Write methods (`modify_group`, `modify_user`, `enable_user`, `disable_user`, `add_member`,
+`remove_member`, `move_user_to_ou`, `set_password`, `create_user`, `rename_user_cn`, `modify_ou`)
+return the strict envelope:
+
+```python
+service = ADGroupService(ad_connection, sql_connection)  # no compatibility_mode
+result = service.modify_group(group, [("description", "new")])
+
+# {
+#     "success": True,
+#     "operation_kind": "write",
+#     "ldap_result": "ok",          # the old "result" value lives here now
+#     "exception_type": None,
+#     "exception_message": None,    # the old "message" value lives here now
+#     "request_context": {"changes": {"description": "old -> new"}},
+#     "retry_count": 0,
+#     "retried": False,
+#     "would_retry": False,
+#     "retry_policy": "ad-write-no-retry",
+#     "error_code": None,
+#     "did_retry": False,
+#     "changes": {"description": "old -> new"},
+# }
+if result["success"]:
+    outcome = result["ldap_result"]   # was result["result"]
+```
+
+There are **no** `result` or `message` keys. Read `ldap_result` instead of `result` and
+`exception_message` instead of `message`.
+
+---
+
+## Historical context (Stage N / N+1)
+
+The remainder of this guide describes the now-removed compatibility-mode behavior and is kept
+for historical reference only.
+
+Issue #19 introduced a consistent **operation envelope** for AD service write
 operations, built on the dict-compatible response models from #18. The envelope
 adds modern, machine-routable metadata while preserving the legacy dict shape
 under the default `legacy` compatibility mode.

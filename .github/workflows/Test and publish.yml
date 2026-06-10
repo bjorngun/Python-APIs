@@ -20,17 +20,26 @@ jobs:
         set -euo pipefail
 
         semver_labels=$(printf '%s' "$PR_LABELS" | jq -r '.[] | select(startswith("semver:"))')
+        semver_labels=$(printf '%s\n' "$semver_labels" | sed '/^$/d')
 
         semver_count=$(printf '%s\n' "$semver_labels" | sed '/^$/d' | wc -l | tr -d ' ')
+        labels_display=$(printf '%s' "$semver_labels" | paste -sd ',' -)
         if [ "$semver_count" -ne 1 ]; then
-          echo "::error::PR #$PR_NUMBER must have exactly one SemVer label: semver:major, semver:minor, or semver:none."
-          echo "::error::Found ${semver_count} SemVer label(s): ${semver_labels:-<none>}"
-          echo "::error::See the Versioning and Release Flow section in README.md."
+          echo "::error::PR #$PR_NUMBER must have exactly one SemVer label (semver:major, semver:minor, or semver:none)."
+          echo "::error::Found ${semver_count} SemVer label(s): ${labels_display:-<none>}. See the Versioning and Release Flow section in README.md."
           exit 1
         fi
 
-        semver_label=$(printf '%s\n' "$semver_labels" | sed '/^$/d')
-        echo "PR #$PR_NUMBER has a valid SemVer label: $semver_label"
+        case "$semver_labels" in
+          semver:major|semver:minor|semver:none)
+            echo "PR #$PR_NUMBER has a valid SemVer label: $semver_labels"
+            ;;
+          *)
+            echo "::error::PR #$PR_NUMBER has an unsupported SemVer label: $semver_labels."
+            echo "::error::Allowed SemVer labels are semver:major, semver:minor, or semver:none. See the Versioning and Release Flow section in README.md."
+            exit 1
+            ;;
+        esac
 
   check-links:
     runs-on: ubuntu-latest

@@ -9,7 +9,6 @@ AD to run it effectively.
 
 import functools
 import logging
-import os
 import ssl
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,10 +25,6 @@ logger = logging.getLogger(__name__)
 
 _RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
 _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
-
-AD_COMPATIBILITY_MODES = ('legacy', 'mixed', 'strict')
-AD_DEFAULT_COMPATIBILITY_MODE = 'legacy'
-AD_COMPATIBILITY_ENV_VAR = 'PYTHON_APIS_AD_COMPAT_MODE'
 
 
 def _build_retry_policy(operation_kind: str) -> dict[str, Any]:
@@ -74,40 +69,6 @@ class RetryTelemetry:
     would_retry: bool = False
     recovered: bool = False
     policy: dict[str, Any] = field(default_factory=dict)
-
-
-def resolve_ad_compatibility_mode(
-    per_call_mode: str | None = None,
-    service_mode: str | None = None,
-    env_mode: str | None = None,
-) -> str:
-    """Resolve the effective AD compatibility mode.
-
-    Precedence is deterministic and shared across AD APIs/services:
-    `per_call_mode` -> `service_mode` -> environment variable
-    (`PYTHON_APIS_AD_COMPAT_MODE`) -> `legacy`.
-
-    Any unknown, empty, or whitespace-only mode value falls back to `legacy`.
-    """
-
-    selected_env_mode = env_mode if env_mode is not None else os.getenv(AD_COMPATIBILITY_ENV_VAR)
-    candidates = (per_call_mode, service_mode, selected_env_mode)
-    for mode in candidates:
-        if mode is None:
-            continue
-        normalized_mode = str(mode).strip().lower()
-        if not normalized_mode:
-            continue
-        if normalized_mode in AD_COMPATIBILITY_MODES:
-            return normalized_mode
-        logger.warning(
-            "Unsupported AD compatibility mode '%s'. Falling back to '%s'.",
-            mode,
-            AD_DEFAULT_COMPATIBILITY_MODE,
-        )
-        return AD_DEFAULT_COMPATIBILITY_MODE
-
-    return AD_DEFAULT_COMPATIBILITY_MODE
 
 
 def _auto_reconnect(operation_kind: str = "write"):
@@ -184,13 +145,11 @@ class ADConnection:
         servers: list,
         search_base: str,
         enable_ldap_logging: bool = False,
-        compatibility_mode: str | None = None,
     ):
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
 
         self._servers = servers
-        self.compatibility_mode = resolve_ad_compatibility_mode(service_mode=compatibility_mode)
         self.connection = self._get_connection(servers)
         self.search_base = search_base
         self._last_retry_telemetry: RetryTelemetry | None = None

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ldap3.utils.log import set_library_log_detail_level, BASIC
-from ldap3 import (ALL_ATTRIBUTES, MODIFY_ADD, MODIFY_DELETE,
+from ldap3 import (ALL_ATTRIBUTES, BASE, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, GSSAPI,
                    Connection, Server, ServerPool, Tls)
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
@@ -307,6 +307,70 @@ class ADConnection:
 
         search_result = self.search(search_filter, attributes)
         return search_result[0] if len(search_result) > 0 else collections.defaultdict(lambda: '')
+
+    @staticmethod
+    def _parse_ranged_attribute(
+        attributes: dict[str, Any], attribute: str
+    ) -> tuple[list[str], int | None]:
+        """Extract values and the next range start from a ranged search result.
+
+        Active Directory returns large multi-valued attributes under a ranged
+        key such as ``member;range=0-1499``. This inspects ``attributes`` for
+        either the plain ``attribute`` key (small object, whole value returned)
+        or its ranged variant and returns ``(values, next_start)`` where
+        ``next_start`` is ``None`` once the terminal range (``*``) is reached.
+        """
+
+        for key, value in attributes.items():
+            if key != attribute and not key.startswith(f"{attribute};range="):
+                continue
+            values = value if isinstance(value, list) else [value]
+            if ";range=" not in key:
+                return values, None
+            high = key.rsplit("-", 1)[-1]
+            if high == "*":
+                return values, None
+            return values, int(high) + 1
+        return [], None
+
+    @_auto_reconnect("read")
+    def get_ranged_attribute(self, distinguished_name: str, attribute: str) -> list[str]:
+        """Retrieve all values of a multi-valued attribute via LDAP ranged reads.
+
+        Active Directory caps how many values of a multi-valued attribute (for
+        example ``member`` on a large group) it returns at once and exposes the
+        remainder through the ``attribute;range=lo-hi`` mechanism. This walks
+        every range (base-scoped reads of ``distinguished_name``) until the
+        server returns the terminal range and returns the assembled values in
+        server order. Returns ``[]`` when the object or attribute is absent.
+
+        Args:
+            distinguished_name (str): DN of the object to read.
+            attribute (str): The multi-valued attribute to assemble.
+
+        Returns:
+            list[str]: All values of ``attribute`` across every range.
+        """
+
+        values: list[str] = []
+        start = 0
+        while True:
+            ranged_key = f"{attribute};range={start}-*"
+            found = self.connection.search(
+                search_base=distinguished_name,
+                search_filter="(objectClass=*)",
+                search_scope=BASE,
+                attributes=[ranged_key],
+            )
+            if not found or not self.connection.response:
+                break
+            entry_attributes = self.connection.response[0].get("attributes", {}) or {}
+            chunk, next_start = self._parse_ranged_attribute(entry_attributes, attribute)
+            values.extend(chunk)
+            if next_start is None:
+                break
+            start = next_start
+        return values
 
     @_auto_reconnect("write")
     def modify(self, distinguished_name: str, changes: list[tuple[str, str]]) -> dict[str, Any]:

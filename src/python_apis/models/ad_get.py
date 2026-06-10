@@ -18,7 +18,7 @@ so ``ADConnection`` cannot import from that module).
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Mirrors ``python_apis.services.error_taxonomy.AD_NOT_FOUND``. Duplicated here as a
 # plain string because the services constant cannot be imported without a circular
@@ -41,9 +41,9 @@ class ADGetResult(BaseModel):
     found: bool = Field(
         description="True when an object matched and is present in ``item``.",
     )
-    item: Any = Field(
+    item: dict[str, Any] | None = Field(
         default=None,
-        description="Matched AD object (first match when several matched); None when absent.",
+        description="Matched AD object mapping (first match when several); None when absent.",
     )
     not_found_reason: ADGetNotFoundReason | None = Field(
         default=None,
@@ -54,8 +54,29 @@ class ADGetResult(BaseModel):
         description="Canonical error taxonomy code for the absence, e.g. 'AD_NOT_FOUND'.",
     )
 
+    @model_validator(mode="after")
+    def _check_found_invariants(self) -> "ADGetResult":
+        """Reject internally inconsistent envelopes.
+
+        A found result must carry an ``item`` and no absence metadata; a
+        not-found result must omit ``item`` and carry a ``not_found_reason``.
+        Validating at construction keeps this public contract type unambiguous.
+        """
+
+        if self.found:
+            if self.item is None:
+                raise ValueError("found result requires a non-None item")
+            if self.not_found_reason is not None or self.error_code is not None:
+                raise ValueError("found result must not carry not-found metadata")
+        else:
+            if self.item is not None:
+                raise ValueError("not-found result must not carry an item")
+            if self.not_found_reason is None:
+                raise ValueError("not-found result requires a not_found_reason")
+        return self
+
     @classmethod
-    def found_item(cls, item: Any) -> "ADGetResult":
+    def found_item(cls, item: dict[str, Any]) -> "ADGetResult":
         """Build a found result wrapping ``item``."""
 
         return cls(found=True, item=item)

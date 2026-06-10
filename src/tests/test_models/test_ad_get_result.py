@@ -67,5 +67,28 @@ class TestADGetResultShape(unittest.TestCase):
             ADGetResult(found=True, item={}, unexpected='x')
 
 
+class TestADGetResultInvariants(unittest.TestCase):
+
+    def test_found_true_requires_item(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            ADGetResult(found=True, item=None)
+
+    def test_found_true_rejects_not_found_metadata(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            ADGetResult(found=True, item={'cn': 'x'}, not_found_reason='no_match')
+
+    def test_found_false_rejects_item(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            ADGetResult(found=False, item={'cn': 'x'}, not_found_reason='no_match')
+
+    def test_found_false_requires_reason(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            ADGetResult(found=False, item=None)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -328,7 +328,8 @@ class ADConnection:
 
         Args:
             search_filter (str): An LDAP filter string.
-            attributes (list[str]): A list of attributes that will be fetched.
+            attributes (list[str] | None): Attributes to fetch; ``None`` fetches
+                ``ALL_ATTRIBUTES``.
 
         Returns:
             ADGetResult: A typed found/not-found envelope.

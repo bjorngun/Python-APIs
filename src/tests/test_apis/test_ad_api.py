@@ -90,6 +90,16 @@ class TestADConnection(unittest.TestCase):
 
         self.assertEqual(result['cn'], '')  # defaultdict returns empty string
 
+    def test_get_emits_deprecation_warning(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        mock_result = [{'attributes': {'cn': 'John Doe'}}]
+        self.mock_connection.extend.standard.paged_search.return_value = iter(mock_result)
+
+        with self.assertWarns(DeprecationWarning) as ctx:
+            ad_conn.get('(objectClass=user)', ['cn'])
+
+        self.assertIn('get_v2', str(ctx.warning))
+
     def test_get_v2_with_results(self):
         ad_conn = ADConnection(self.servers, self.search_base)
         mock_result = [{'attributes': {'cn': 'John Doe'}}]

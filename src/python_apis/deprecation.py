@@ -49,7 +49,7 @@ def build_legacy_message(
     )
 
 
-def warn_legacy(
+def warn_legacy(  # pylint: disable=too-many-arguments
     legacy: str,
     *,
     replacement: str,

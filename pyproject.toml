@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'python_apis'
-version = "0.9.0"
+version = "0.10.0"
 authors = [
   { name="Björn Gunnarsson", email="bjorngun@kopavogur.is" },
 ]

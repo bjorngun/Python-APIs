@@ -13,6 +13,7 @@ from python_apis.models.ad_responses import (
     ADOperationEnvelope,
     ADEntry,
     ADSearchResponse,
+    ADMembersPage,
 )
 
 from python_apis.models.sap_employee import Employee
@@ -29,6 +30,7 @@ __all__ = [
     "ADOperationEnvelope",
     "ADEntry",
     "ADSearchResponse",
+    "ADMembersPage",
 
     "Employee",
 

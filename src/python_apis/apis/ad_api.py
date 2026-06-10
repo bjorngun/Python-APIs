@@ -21,6 +21,7 @@ from ldap3 import (ALL_ATTRIBUTES, BASE, MODIFY_ADD, MODIFY_DELETE,
                    Connection, Server, ServerPool, Tls)
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 
+from python_apis.deprecation import warn_legacy
 from python_apis.models.ad_get import ADGetResult
 
 logger = logging.getLogger(__name__)
@@ -299,14 +300,43 @@ class ADConnection:
         """Returns a single result, the first result if more then one result
         is matched and an empty dict if zero results where returned.
 
+        .. deprecated::
+            Prefer :meth:`get_v2`, which returns a typed :class:`ADGetResult`
+            with an explicit ``found`` flag. The legacy empty-default mapping is
+            indistinguishable from a real object whose attributes are all empty.
+
+            Before (legacy, ambiguous)::
+
+                obj = conn.get("(sAMAccountName=jdoe)", ["cn"])
+                if obj.get("cn"):   # empty default vs present-but-empty
+                    ...
+
+            After (typed, unambiguous)::
+
+                res = conn.get_v2("(sAMAccountName=jdoe)", ["cn"])
+                if res.found:
+                    use(res.item)
+
+            See ``python_apis.discovery.get_capability('get-v2')`` and
+            ``python_apis.migration_examples.legacy_get_to_get_v2()``.
+
         Args:
             search_filter (str): An LDAP filter string.
-            attributes (list[str]): A list of attributes that will be fetched.
+            attributes (list[str] | None): Attributes to fetch; ``None`` fetches
+                ``ALL_ATTRIBUTES``.
 
         Returns:
             dict[str, str]: AD object as a dict, empty values if none were found.
         """
 
+        warn_legacy(
+            "ADConnection.get",
+            replacement="ADConnection.get_v2",
+            migration_hint=(
+                "Branch on ADGetResult.found instead of probing the empty default "
+                "mapping; see python_apis.discovery.get_capability('get-v2')."
+            ),
+        )
         search_result = self.search(search_filter, attributes)
         return search_result[0] if len(search_result) > 0 else collections.defaultdict(lambda: '')
 

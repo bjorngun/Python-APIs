@@ -17,19 +17,13 @@ from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADOrganizationalUnit, ADBatchReadResult, base
 from python_apis.schemas import ADOrganizationalUnitSchema
 from python_apis.services.batch_read import build_batch_read_result
-from python_apis.services.compatibility_mode import (
-    finalize_ad_write_response,
-    resolve_service_compatibility_mode,
-)
+from python_apis.services.compatibility_mode import finalize_ad_write_response
 
 class ADOrganizationalUnitService:
     """Service class for interacting with Active Directory organizational units.
 
-        Compatibility mode contract:
-        - Supported modes are ``legacy``, ``mixed``, and ``strict``.
-        - Effective mode precedence is per-call override, then service default,
-            then `PYTHON_APIS_AD_COMPAT_MODE`, then ``legacy`` fallback.
-        - Invalid or empty mode values must resolve to ``legacy`` deterministically.
+    AD write operations return a strict :class:`ADOperationEnvelope` response
+    (no legacy ``result``/``message`` mirror keys).
     """
 
     def __init__(
@@ -37,7 +31,6 @@ class ADOrganizationalUnitService:
         ad_connection: ADConnection = None,
         sql_connection: SQLConnection = None,
         ldap_logging: bool = False,
-        compatibility_mode: str | None = None,
     ):
         """Initialize the ADOrganizationalUnitService with an ADConnection and a db connection.
 
@@ -47,14 +40,8 @@ class ADOrganizationalUnitService:
             sql_connection (SQLConnection, optional): An existing SQLConnection instance.
                 If None, a new one will be created.
             ldap_logging (bool, optional): Whether to enable LDAP logging. Defaults to False.
-            compatibility_mode (str | None, optional): Default compatibility mode for the
-                service instance. Resolved with deterministic precedence against environment
-                defaults and fallback behavior.
         """
         self.logger = getLogger(__name__)
-        self.compatibility_mode = resolve_service_compatibility_mode(
-            service_mode=compatibility_mode
-        )
 
         if sql_connection is None:
             sql_connection = self._get_sql_connection()
@@ -63,21 +50,6 @@ class ADOrganizationalUnitService:
         if ad_connection is None:
             ad_connection = self._get_ad_connection(ldap_logging)
         self.ad_connection = ad_connection
-
-    def _resolve_effective_mode(self, compatibility_mode: str | None = None) -> str:
-        """Resolve effective compatibility mode for a service operation."""
-        return resolve_service_compatibility_mode(
-            per_call_mode=compatibility_mode,
-            service_mode=self.compatibility_mode,
-        )
-
-    def get_compatibility_mode(self, compatibility_mode: str | None = None) -> dict[str, str]:
-        """Return service default and effective compatibility mode for this context."""
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        return {
-            'service_default_mode': self.compatibility_mode,
-            'effective_mode': effective_mode,
-        }
 
     def _get_sql_connection(self) -> SQLConnection:
         """Create and return a SQLConnection instance based on environment variables.
@@ -212,7 +184,6 @@ class ADOrganizationalUnitService:
     def get_ous_from_ad(
         self,
         search_filter: str = '(objectClass=organizationalUnit)',
-        compatibility_mode: str | None = None,
     ) -> list[ADOrganizationalUnit]:
         """Retrieve organizational units from Active Directory based on a search filter.
 
@@ -223,9 +194,6 @@ class ADOrganizationalUnitService:
             list[ADOrganizationalUnit]: A list of ADOrganizationalUnit instances matching the
             search criteria.
         """
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        self.logger.debug("Using AD compatibility mode '%s' for get_ous_from_ad", effective_mode)
-
         attributes = ADOrganizationalUnit.get_attribute_list()
         ad_ous_dict = self.ad_connection.search(search_filter, attributes)
         ad_ous = []
@@ -250,7 +218,6 @@ class ADOrganizationalUnitService:
     def get_ous_from_ad_v2(
         self,
         search_filter: str = '(objectClass=organizationalUnit)',
-        compatibility_mode: str | None = None,
     ) -> ADBatchReadResult:
         """Retrieve organizational units from AD as a batch result.
 
@@ -262,16 +229,10 @@ class ADOrganizationalUnitService:
         Args:
             search_filter (str): LDAP search filter. Defaults to
                 ``'(objectClass=organizationalUnit)'``.
-            compatibility_mode (str | None): Optional compatibility mode override.
 
         Returns:
             ADBatchReadResult: Envelope of returned OUs and failed records.
         """
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        self.logger.debug(
-            "Using AD compatibility mode '%s' for get_ous_from_ad_v2", effective_mode
-        )
-
         attributes = ADOrganizationalUnit.get_attribute_list()
         ad_ous_dict = self.ad_connection.search(search_filter, attributes)
         return build_batch_read_result(
@@ -284,7 +245,6 @@ class ADOrganizationalUnitService:
         self,
         ou: ADOrganizationalUnit,
         changes: list[tuple[str, str]],
-        compatibility_mode: str | None = None,
     ) -> dict[str, Any]:
         """Modify attributes of a organizational unit in Active Directory.
 
@@ -294,8 +254,6 @@ class ADOrganizationalUnitService:
                 Each tuple consists of an attribute name and its new value.
                 For example:
                     [('name', 'John'), ('description', 'Doe')]
-            compatibility_mode (str | None): Optional per-call compatibility mode
-                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: A dictionary containing the result of the modify operation with the
@@ -305,7 +263,6 @@ class ADOrganizationalUnitService:
                 - 'changes' (dict[str, str]): A mapping of attribute names to their changes in the
                 format 'old_value -> new_value'.
         """
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
         change_affects = {k: f"{getattr(ou, k)} -> {v}" for k, v in changes}
         try:
             response = self.ad_connection.modify(ou.distinguishedName, changes)
@@ -318,7 +275,6 @@ class ADOrganizationalUnitService:
             )
             return finalize_ad_write_response(
                 {'success': False, 'result': str(e)},
-                effective_mode=effective_mode,
                 exception=e,
                 retry_telemetry=self.ad_connection.last_retry_telemetry,
             )
@@ -344,7 +300,6 @@ class ADOrganizationalUnitService:
                 'result': response.get('result'),
                 'changes': change_affects,
             },
-            effective_mode=effective_mode,
             retry_telemetry=self.ad_connection.last_retry_telemetry,
         )
 

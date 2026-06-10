@@ -18,10 +18,7 @@ from python_apis.models import ADGroup, ADMembersPage, ADUser, base
 from python_apis.models import ADBatchReadResult
 from python_apis.schemas import ADGroupSchema
 from python_apis.services.batch_read import build_batch_read_result
-from python_apis.services.compatibility_mode import (
-    finalize_ad_write_response,
-    resolve_service_compatibility_mode,
-)
+from python_apis.services.compatibility_mode import finalize_ad_write_response
 
 # AD matching rule OID for transitive (nested) membership evaluation.
 # Filtering ``member`` with this rule walks the full membership chain.
@@ -30,11 +27,8 @@ LDAP_MATCHING_RULE_IN_CHAIN = "1.2.840.113556.1.4.1941"
 class ADGroupService:
     """Service class for interacting with Active Directory groups.
 
-        Compatibility mode contract:
-        - Supported modes are ``legacy``, ``mixed``, and ``strict``.
-        - Effective mode precedence is per-call override, then service default,
-            then `PYTHON_APIS_AD_COMPAT_MODE`, then ``legacy`` fallback.
-        - Invalid or empty mode values must resolve to ``legacy`` deterministically.
+    AD write operations return a strict :class:`ADOperationEnvelope` response
+    (no legacy ``result``/``message`` mirror keys).
     """
 
     def __init__(
@@ -42,7 +36,6 @@ class ADGroupService:
         ad_connection: ADConnection = None,
         sql_connection: SQLConnection = None,
         ldap_logging: bool = False,
-        compatibility_mode: str | None = None,
     ):
         """Initialize the ADGroupService with an ADConnection and a db connection.
 
@@ -52,14 +45,8 @@ class ADGroupService:
             sql_connection (SQLConnection, optional): An existing SQLConnection instance.
                 If None, a new one will be created.
             ldap_logging (bool, optional): Whether to enable LDAP logging. Defaults to False.
-            compatibility_mode (str | None, optional): Default compatibility mode for the
-                service instance. Resolved with deterministic precedence against environment
-                defaults and fallback behavior.
         """
         self.logger = getLogger(__name__)
-        self.compatibility_mode = resolve_service_compatibility_mode(
-            service_mode=compatibility_mode
-        )
 
         if sql_connection is None:
             sql_connection = self._get_sql_connection()
@@ -68,21 +55,6 @@ class ADGroupService:
         if ad_connection is None:
             ad_connection = self._get_ad_connection(ldap_logging)
         self.ad_connection = ad_connection
-
-    def _resolve_effective_mode(self, compatibility_mode: str | None = None) -> str:
-        """Resolve effective compatibility mode for a service operation."""
-        return resolve_service_compatibility_mode(
-            per_call_mode=compatibility_mode,
-            service_mode=self.compatibility_mode,
-        )
-
-    def get_compatibility_mode(self, compatibility_mode: str | None = None) -> dict[str, str]:
-        """Return service default and effective compatibility mode for this context."""
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        return {
-            'service_default_mode': self.compatibility_mode,
-            'effective_mode': effective_mode,
-        }
 
     def _get_sql_connection(self) -> SQLConnection:
         """Create and return a SQLConnection instance based on environment variables.
@@ -167,7 +139,6 @@ class ADGroupService:
     def get_groups_from_ad(
         self,
         search_filter: str = '(objectClass=group)',
-        compatibility_mode: str | None = None,
     ) -> list[ADGroup]:
         """Retrieve groups from Active Directory based on a search filter.
 
@@ -177,9 +148,6 @@ class ADGroupService:
         Returns:
             list[ADGroup]: A list of ADGroup instances matching the search criteria.
         """
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        self.logger.debug("Using AD compatibility mode '%s' for get_groups_from_ad", effective_mode)
-
         return self._groups_from_search(search_filter)
 
     def _groups_from_search(self, search_filter: str) -> list[ADGroup]:
@@ -212,7 +180,6 @@ class ADGroupService:
     def get_groups_from_ad_v2(
         self,
         search_filter: str = '(objectClass=group)',
-        compatibility_mode: str | None = None,
     ) -> ADBatchReadResult:
         """Retrieve groups from AD as a partial-failure-aware batch result.
 
@@ -226,16 +193,10 @@ class ADGroupService:
         Args:
             search_filter (str): LDAP search filter. Defaults to
                 ``'(objectClass=group)'``.
-            compatibility_mode (str | None): Optional compatibility mode override.
 
         Returns:
             ADBatchReadResult: Envelope of returned groups and failed records.
         """
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        self.logger.debug(
-            "Using AD compatibility mode '%s' for get_groups_from_ad_v2", effective_mode
-        )
-
         attributes = ADGroup.get_attribute_list()
         ad_groups_dict = self.ad_connection.search(search_filter, attributes)
 
@@ -253,7 +214,6 @@ class ADGroupService:
     def get_user_direct_groups(
         self,
         user: ADUser | str,
-        compatibility_mode: str | None = None,
     ) -> list[ADGroup]:
         """Return the groups a user is a direct member of.
 
@@ -264,17 +224,10 @@ class ADGroupService:
 
         Args:
             user (ADUser | str): The user, or the user's distinguishedName.
-            compatibility_mode (str | None): Optional per-call compatibility mode
-                override (accepted for API symmetry; reads return typed models).
 
         Returns:
             list[ADGroup]: Direct group memberships (empty list if none).
         """
-
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        self.logger.debug(
-            "Using AD compatibility mode '%s' for get_user_direct_groups", effective_mode
-        )
 
         user_dn = user.distinguishedName if isinstance(user, ADUser) else user
         if not user_dn:
@@ -304,7 +257,6 @@ class ADGroupService:
     def resolve_primary_group(
         self,
         user: ADUser,
-        compatibility_mode: str | None = None,
     ) -> ADGroup | None:
         """Resolve a user's primary group.
 
@@ -318,18 +270,11 @@ class ADGroupService:
         Args:
             user (ADUser): The user whose ``objectSid`` and ``primaryGroupID`` are
                 used to derive the primary group SID.
-            compatibility_mode (str | None): Optional per-call compatibility mode
-                override (accepted for API symmetry; reads return typed models).
 
         Returns:
             ADGroup | None: The primary group, or ``None`` when the user is
             missing ``objectSid``/``primaryGroupID`` or no group matches.
         """
-
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        self.logger.debug(
-            "Using AD compatibility mode '%s' for resolve_primary_group", effective_mode
-        )
 
         user_sid = getattr(user, 'objectSid', None)
         primary_group_id = getattr(user, 'primaryGroupID', None)
@@ -355,7 +300,6 @@ class ADGroupService:
     def get_user_transitive_groups(
         self,
         user: ADUser | str,
-        compatibility_mode: str | None = None,
     ) -> list[ADGroup]:
         """Return all groups a user belongs to, including nested memberships.
 
@@ -369,18 +313,11 @@ class ADGroupService:
 
         Args:
             user (ADUser | str): The user, or the user's distinguishedName.
-            compatibility_mode (str | None): Optional per-call compatibility mode
-                override (accepted for API symmetry; reads return typed models).
 
         Returns:
             list[ADGroup]: All (direct and nested) group memberships, ordered by
             ``distinguishedName`` (empty list if none).
         """
-
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        self.logger.debug(
-            "Using AD compatibility mode '%s' for get_user_transitive_groups", effective_mode
-        )
 
         user_dn = user.distinguishedName if isinstance(user, ADUser) else user
         if not user_dn:
@@ -393,13 +330,12 @@ class ADGroupService:
         groups = self._groups_from_search(search_filter)
         return sorted(groups, key=lambda group: group.distinguishedName or "")
 
-    def get_group_members(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def get_group_members(
         self,
         group: ADGroup | str,
         page_size: int = 500,
         offset: int = 0,
         max_members: int | None = None,
-        compatibility_mode: str | None = None,
     ) -> ADMembersPage:
         """Return a page of a group's member distinguished names at scale.
 
@@ -426,17 +362,10 @@ class ADGroupService:
             max_members (int | None): Optional hard cap on the total members
                 considered; protects against unbounded reads of very large
                 groups. ``None`` means no cap.
-            compatibility_mode (str | None): Optional per-call compatibility mode
-                override (accepted for API symmetry; reads return typed models).
 
         Returns:
             ADMembersPage: The requested page of member DNs plus paging metadata.
         """
-
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
-        self.logger.debug(
-            "Using AD compatibility mode '%s' for get_group_members", effective_mode
-        )
 
         group_dn = group.distinguishedName if isinstance(group, ADGroup) else group
         if not group_dn:
@@ -491,7 +420,6 @@ class ADGroupService:
         self,
         group: ADGroup,
         changes: list[tuple[str, Any]],
-        compatibility_mode: str | None = None,
     ) -> dict[str, Any]:
         """Modify attributes of a group in Active Directory.
 
@@ -504,8 +432,6 @@ class ADGroupService:
                         ('description', 'New Description'),
                         ('managedBy', 'CN=Manager,OU=Users,DC=example,DC=com'),
                     ]
-            compatibility_mode (str | None): Optional per-call compatibility mode
-                override controlling the response envelope shape.
 
         Returns:
             dict[str, Any]: A dictionary containing the result of the modify operation with the
@@ -515,7 +441,6 @@ class ADGroupService:
                 - 'changes' (dict[str, Any]): A mapping of attribute names to their changes in the
                 format 'old_value -> new_value'.
         """
-        effective_mode = self._resolve_effective_mode(compatibility_mode)
         change_affects = {k: f"{getattr(group, k)} -> {v}" for k, v in changes}
         try:
             response = self.ad_connection.modify(group.distinguishedName, changes)
@@ -528,7 +453,6 @@ class ADGroupService:
             )
             return finalize_ad_write_response(
                 {'success': False, 'result': str(e)},
-                effective_mode=effective_mode,
                 exception=e,
                 retry_telemetry=self.ad_connection.last_retry_telemetry,
             )
@@ -554,7 +478,6 @@ class ADGroupService:
                 'result': response.get('result'),
                 'changes': change_affects,
             },
-            effective_mode=effective_mode,
             retry_telemetry=self.ad_connection.last_retry_telemetry,
         )
 

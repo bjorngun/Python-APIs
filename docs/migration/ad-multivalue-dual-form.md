@@ -33,9 +33,15 @@ behavior are **unchanged**; the dual-form is opt-in.
 | `count` | `int` | `len(values)`. |
 | `delimiter` | `str` | Delimiter used for splitting and the legacy accessor (default `","`). |
 
-`ADMultiValue.as_legacy_string(delimiter=None)` reproduces the historic
-delimiter-joined string so existing comma-joined consumers keep working during
-the transition. `ADMultiValue.to_dict()` returns a JSON-serializable payload.
+`ADMultiValue.as_legacy_string(delimiter=None)` reproduces the historic schema
+representation derived from `raw` **verbatim** (`','.join(map(str, value))` for
+list sources, the unchanged string for scalar sources, and `''` when absent), so
+existing comma-joined consumers keep working during the transition without the
+stripping/dropping that normalization applies. Passing an explicit `delimiter`
+instead joins the normalized `values` with that separator.
+`ADMultiValue.to_dict()` returns a JSON-serializable payload; non-JSON-native
+`raw` values (for example binary attributes or datetimes) are coerced to a safe
+form (`bytes` → hex, `datetime`/`date` → ISO-8601).
 
 ## Deterministic normalization rules
 

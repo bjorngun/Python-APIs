@@ -16,6 +16,7 @@ The normalization rules implemented by :func:`normalize_multivalue` are
 deterministic and documented in ``docs/migration/ad-multivalue-dual-form.md``.
 """
 
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +24,29 @@ from pydantic import BaseModel, ConfigDict, Field
 DEFAULT_DELIMITER = ","
 
 MultiValueSource = Literal["absent", "list", "scalar", "delimited_string"]
+
+
+def _jsonify(value: Any) -> Any:
+    """Return a JSON-serializable representation of ``value``.
+
+    JSON-native scalars/containers pass through (recursively); ``bytes`` become a
+    hex string, ``datetime``/``date`` become ISO-8601 strings, and any other type
+    falls back to ``str``. This keeps :meth:`ADMultiValue.to_dict` serializable
+    even when a preserved ``raw`` value is a non-JSON-native AD value (for example
+    a binary ``objectGUID`` or a ``datetime``).
+    """
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return value.hex()
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_jsonify(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonify(item) for key, item in value.items()}
+    return str(value)
 
 
 class ADMultiValueMetadata(BaseModel):
@@ -86,21 +110,39 @@ class ADMultiValue(BaseModel):
         return normalize_multivalue(raw, delimiter=delimiter)
 
     def as_legacy_string(self, delimiter: str | None = None) -> str:
-        """Return the historic delimiter-joined string for the normalized values.
+        """Return the historic legacy delimited-string representation.
 
-        Reproduces the legacy comma-joined representation so existing consumers
-        can be served from the dual-form during the transition. When
-        ``delimiter`` is ``None`` the delimiter captured in ``metadata`` is used.
+        With the default ``delimiter=None`` this reproduces the **historic schema
+        representation derived from** ``raw`` verbatim, matching the legacy
+        behavior existing consumers relied on (``','.join(map(str, value))`` for
+        list sources, the unchanged string for scalar sources, ``str(value)`` for
+        other scalars, and ``''`` when absent). This intentionally does *not*
+        strip/drop elements the way normalization does, so legacy consumers see
+        exactly what the old code produced.
+
+        When an explicit ``delimiter`` is provided, the normalized ``values`` are
+        joined with that separator instead, for callers that want a different
+        delimiter over the cleaned list.
         """
 
-        sep = self.metadata.delimiter if delimiter is None else delimiter
-        return sep.join(self.values)
+        if delimiter is not None:
+            return delimiter.join(self.values)
+        if isinstance(self.raw, list):
+            return DEFAULT_DELIMITER.join(map(str, self.raw)) if self.raw else ""
+        if self.raw is None:
+            return ""
+        return str(self.raw)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a plain, JSON-serializable ``dict`` of this dual-form value."""
+        """Return a plain, JSON-serializable ``dict`` of this dual-form value.
+
+        The preserved ``raw`` value is converted to a JSON-safe representation
+        (see :func:`_jsonify`) so the payload remains serializable even for
+        non-JSON-native AD values such as binary attributes or datetimes.
+        """
 
         return {
-            "raw": self.raw,
+            "raw": _jsonify(self.raw),
             "values": list(self.values),
             "metadata": self.metadata.to_dict(),
         }
@@ -133,11 +175,18 @@ def normalize_multivalue(
     Args:
         raw: The original AD source value (list/str/int/None).
         delimiter: Delimiter used for delimited-string splitting and recorded in
-            metadata for the legacy accessor.
+            metadata for the legacy accessor. Must be a non-empty string.
 
     Returns:
         ADMultiValue: The dual-form representation.
+
+    Raises:
+        ValueError: If ``delimiter`` is an empty string (``str.split`` rejects an
+            empty separator, so this is reported up front with a clear message).
     """
+
+    if delimiter == "":
+        raise ValueError("delimiter must be a non-empty string")
 
     if raw is None:
         source: MultiValueSource = "absent"

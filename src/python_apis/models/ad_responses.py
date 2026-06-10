@@ -429,81 +429,6 @@ class ADBatchReadResult(BaseModel):
         }
 
 
-# Mirrors ``python_apis.services.error_taxonomy.AD_NOT_FOUND``. Duplicated here as a
-# string literal because the models layer cannot import the services constant without
-# a circular import (``services/__init__`` imports the AD services, which import this
-# models layer).
-_AD_NOT_FOUND_CODE = "AD_NOT_FOUND"
-
-ADGetNotFoundReason = Literal["no_match"]
-
-
-class ADGetResult(BaseModel):
-    """Typed found/not-found envelope returned by single-object ``get_v2`` reads.
-
-    The legacy ``ADConnection.get`` returns the first matched object as a ``dict``
-    or an empty ``defaultdict`` when nothing matches, which is indistinguishable
-    from a real object whose attributes are all empty. This envelope instead
-    carries an explicit ``found`` flag plus a deterministic ``not_found_reason`` so
-    callers can reliably tell "absent" from "present but empty".
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    found: bool = Field(
-        description="True when an object matched and is present in ``item``.",
-    )
-    item: Any = Field(
-        default=None,
-        description="The matched AD object (first match when several matched); None when absent.",
-    )
-    not_found_reason: ADGetNotFoundReason | None = Field(
-        default=None,
-        description="Deterministic reason the object was absent, e.g. 'no_match'. None when found.",
-    )
-    error_code: str | None = Field(
-        default=None,
-        description="Canonical error taxonomy code for the absence, e.g. 'AD_NOT_FOUND'. None when found.",
-    )
-
-    @classmethod
-    def found_item(cls, item: Any) -> "ADGetResult":
-        """Build a found result wrapping ``item``."""
-
-        return cls(found=True, item=item)
-
-    @classmethod
-    def not_found(
-        cls, reason: ADGetNotFoundReason = "no_match"
-    ) -> "ADGetResult":
-        """Build a not-found result with a deterministic ``reason`` and error code."""
-
-        return cls(
-            found=False,
-            not_found_reason=reason,
-            error_code=_AD_NOT_FOUND_CODE,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a plain, JSON-serializable ``dict`` of this result."""
-
-        item = self.item
-        to_dict = getattr(item, "to_dict", None)
-        if callable(to_dict):
-            item = to_dict()
-        else:
-            mapped = _sqlalchemy_to_dict(item)
-            if mapped is not None:
-                item = mapped
-
-        return {
-            "found": self.found,
-            "item": item,
-            "not_found_reason": self.not_found_reason,
-            "error_code": self.error_code,
-        }
-
-
 __all__: list[str] = [
     # pylint: disable=duplicate-code
     "ADResponse",
@@ -514,5 +439,4 @@ __all__: list[str] = [
     "ADMembersPage",
     "ADBatchItemFailure",
     "ADBatchReadResult",
-    "ADGetResult",
 ]

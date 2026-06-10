@@ -16,8 +16,9 @@ from python_apis.models.ad_responses import (
     ADMembersPage,
     ADBatchItemFailure,
     ADBatchReadResult,
-    ADGetResult,
 )
+
+from python_apis.models.ad_get import ADGetResult
 
 from python_apis.models.multivalue import (
     ADMultiValue,

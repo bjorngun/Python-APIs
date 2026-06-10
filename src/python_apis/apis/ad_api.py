@@ -21,6 +21,8 @@ from ldap3 import (ALL_ATTRIBUTES, BASE, MODIFY_ADD, MODIFY_DELETE,
                    Connection, Server, ServerPool, Tls)
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 
+from python_apis.models.ad_get import ADGetResult
+
 logger = logging.getLogger(__name__)
 
 _RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
@@ -307,6 +309,35 @@ class ADConnection:
 
         search_result = self.search(search_filter, attributes)
         return search_result[0] if len(search_result) > 0 else collections.defaultdict(lambda: '')
+
+    def get_v2(
+        self, search_filter: str, attributes: list[str] | None = None
+    ) -> ADGetResult:
+        """Typed, found/not-found-aware counterpart of :meth:`get`.
+
+        Unlike :meth:`get`, which returns an empty ``defaultdict`` when nothing
+        matches (indistinguishable from a real object whose attributes are all
+        empty), this returns an :class:`ADGetResult` envelope with an explicit
+        ``found`` flag and a deterministic ``not_found_reason`` so callers can
+        tell "absent" from "present but empty". The legacy :meth:`get` is
+        unchanged.
+
+        Not-found semantics are deterministic: a search returning zero rows
+        yields ``found=False`` with ``not_found_reason="no_match"``. When several
+        rows match, the first is returned as ``found=True`` (matching :meth:`get`).
+
+        Args:
+            search_filter (str): An LDAP filter string.
+            attributes (list[str]): A list of attributes that will be fetched.
+
+        Returns:
+            ADGetResult: A typed found/not-found envelope.
+        """
+
+        search_result = self.search(search_filter, attributes)
+        if search_result:
+            return ADGetResult.found_item(search_result[0])
+        return ADGetResult.not_found()
 
     @staticmethod
     def _parse_ranged_attribute(

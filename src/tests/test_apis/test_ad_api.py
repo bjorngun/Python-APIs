@@ -90,6 +90,50 @@ class TestADConnection(unittest.TestCase):
 
         self.assertEqual(result['cn'], '')  # defaultdict returns empty string
 
+    def test_get_v2_with_results(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        mock_result = [{'attributes': {'cn': 'John Doe'}}]
+        self.mock_connection.extend.standard.paged_search.return_value = iter(mock_result)
+
+        result = ad_conn.get_v2('(objectClass=user)', ['cn'])
+
+        self.assertTrue(result.found)
+        self.assertEqual(result.item['cn'], 'John Doe')
+        self.assertIsNone(result.not_found_reason)
+        self.assertIsNone(result.error_code)
+
+    def test_get_v2_returns_first_of_many(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        mock_result = [
+            {'attributes': {'cn': 'First'}},
+            {'attributes': {'cn': 'Second'}},
+        ]
+        self.mock_connection.extend.standard.paged_search.return_value = iter(mock_result)
+
+        result = ad_conn.get_v2('(objectClass=user)', ['cn'])
+
+        self.assertTrue(result.found)
+        self.assertEqual(result.item['cn'], 'First')
+
+    def test_get_v2_no_results(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+
+        result = ad_conn.get_v2('(objectClass=user)', ['cn'])
+
+        self.assertFalse(result.found)
+        self.assertIsNone(result.item)
+        self.assertEqual(result.not_found_reason, 'no_match')
+        self.assertEqual(result.error_code, 'AD_NOT_FOUND')
+
+    def test_get_v2_does_not_change_legacy_get(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+
+        # Legacy get still returns an empty-default mapping, not an ADGetResult.
+        legacy = ad_conn.get('(objectClass=user)', ['cn'])
+        self.assertEqual(legacy['cn'], '')
+
     def test_modify(self):
         ad_conn = ADConnection(self.servers, self.search_base)
         distinguished_name = 'cn=John Doe,ou=users,dc=example,dc=com'

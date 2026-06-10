@@ -14,12 +14,16 @@ from pydantic import ValidationError
 
 from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
-from python_apis.models import ADGroup, ADUser, base
+from python_apis.models import ADGroup, ADMembersPage, ADUser, base
 from python_apis.schemas import ADGroupSchema
 from python_apis.services.compatibility_mode import (
     finalize_ad_write_response,
     resolve_service_compatibility_mode,
 )
+
+# AD matching rule OID for transitive (nested) membership evaluation.
+# Filtering ``member`` with this rule walks the full membership chain.
+LDAP_MATCHING_RULE_IN_CHAIN = "1.2.840.113556.1.4.1941"
 
 class ADGroupService:
     """Service class for interacting with Active Directory groups.
@@ -304,6 +308,141 @@ class ADGroupService:
         search_filter = f"(&(objectClass=group)(objectSid={escaped_sid}))"
         groups = self._groups_from_search(search_filter)
         return groups[0] if groups else None
+
+    def get_user_transitive_groups(
+        self,
+        user: ADUser | str,
+        compatibility_mode: str | None = None,
+    ) -> list[ADGroup]:
+        """Return all groups a user belongs to, including nested memberships.
+
+        Unlike :meth:`get_user_direct_groups` (direct memberships only), this
+        resolves the full membership chain using the AD matching rule
+        ``LDAP_MATCHING_RULE_IN_CHAIN`` (OID ``1.2.840.113556.1.4.1941``):
+        ``(member:1.2.840.113556.1.4.1941:=<userDN>)``. Results are sorted by
+        ``distinguishedName`` so repeated calls are deterministic. Note that a
+        user's *primary* group is not part of the ``member`` chain; use
+        :meth:`resolve_primary_group` for that.
+
+        Args:
+            user (ADUser | str): The user, or the user's distinguishedName.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override (accepted for API symmetry; reads return typed models).
+
+        Returns:
+            list[ADGroup]: All (direct and nested) group memberships, ordered by
+            ``distinguishedName`` (empty list if none).
+        """
+
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_user_transitive_groups", effective_mode
+        )
+
+        user_dn = user.distinguishedName if isinstance(user, ADUser) else user
+        if not user_dn:
+            return []
+
+        escaped_dn = escape_filter_chars(str(user_dn))
+        search_filter = (
+            f"(&(objectClass=group)(member:{LDAP_MATCHING_RULE_IN_CHAIN}:={escaped_dn}))"
+        )
+        groups = self._groups_from_search(search_filter)
+        return sorted(groups, key=lambda group: group.distinguishedName or "")
+
+    def get_group_members(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        group: ADGroup | str,
+        page_size: int = 500,
+        offset: int = 0,
+        max_members: int | None = None,
+        compatibility_mode: str | None = None,
+    ) -> ADMembersPage:
+        """Return a page of a group's member distinguished names at scale.
+
+        Reads the group's ``member`` attribute using LDAP ranged retrieval
+        (:meth:`ADConnection.get_ranged_attribute`), so it works for large
+        groups whose membership AD only returns in ``member;range=lo-hi`` chunks.
+        The assembled member DNs are then paged client-side and returned in an
+        :class:`ADMembersPage` envelope exposing ``total_count``, ``page_info``
+        and ``truncated``.
+
+        ``total_count`` is the number of members available for paging in this
+        response. When ``max_members`` is set and the group has more members,
+        the working set is capped to ``max_members`` and ``truncated`` is
+        ``True`` to signal that members beyond the cap were omitted. The cap is
+        pushed into the ranged read (:meth:`ADConnection.get_ranged_attribute`),
+        so an oversized group stops fetching ranges shortly after the cap is
+        reached rather than materializing the entire membership.
+
+        Args:
+            group (ADGroup | str): The group, or the group's distinguishedName.
+            page_size (int): Maximum members per page. ``0`` or negative returns
+                all members (from ``offset``) in a single page.
+            offset (int): Zero-based index of the first member to return.
+            max_members (int | None): Optional hard cap on the total members
+                considered; protects against unbounded reads of very large
+                groups. ``None`` means no cap.
+            compatibility_mode (str | None): Optional per-call compatibility mode
+                override (accepted for API symmetry; reads return typed models).
+
+        Returns:
+            ADMembersPage: The requested page of member DNs plus paging metadata.
+        """
+
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_group_members", effective_mode
+        )
+
+        group_dn = group.distinguishedName if isinstance(group, ADGroup) else group
+        if not group_dn:
+            return ADMembersPage(page_info=self._members_page_info(page_size, 0, 0))
+
+        # Read one past the cap so truncation can be detected while still
+        # bounding the ranged read for very large groups.
+        fetch_limit = max_members + 1 if max_members is not None and max_members >= 0 else None
+        members = self.ad_connection.get_ranged_attribute(
+            str(group_dn), "member", limit=fetch_limit
+        )
+
+        truncated = max_members is not None and 0 <= max_members < len(members)
+        if truncated:
+            members = members[:max_members]
+
+        total_count = len(members)
+        start = min(max(offset, 0), total_count)
+        end = min(start + page_size, total_count) if page_size and page_size > 0 else total_count
+
+        return ADMembersPage(
+            members=members[start:end],
+            total_count=total_count,
+            truncated=truncated,
+            page_info=self._members_page_info(page_size, start, end, total_count),
+        )
+
+    @staticmethod
+    def _members_page_info(
+        page_size: int,
+        offset: int,
+        end: int,
+        total_count: int = 0,
+    ) -> dict[str, Any]:
+        """Build a consistently-shaped ``page_info`` mapping for member pages.
+
+        Always returns the same key surface (``page_size``, ``offset``,
+        ``next_offset``, ``has_next_page``) so callers following the paging
+        contract never hit a ``KeyError`` -- including the empty/missing-group
+        early-return path.
+        """
+
+        has_next_page = end < total_count
+        return {
+            "page_size": page_size,
+            "offset": offset,
+            "next_offset": end if has_next_page else None,
+            "has_next_page": has_next_page,
+        }
 
     def modify_group(
         self,

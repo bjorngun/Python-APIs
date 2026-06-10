@@ -77,6 +77,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   distinguishedName string; both escape LDAP filter values and reuse the retry-capable read path
   (additive, backward-compatible)
 - Contract tests for the membership APIs covering happy and edge paths
+- Membership APIs v2 on `ADGroupService` (issue #23): `get_user_transitive_groups(user)` returning
+  every group a user belongs to including nested memberships (`list[ADGroup]`, sorted by
+  `distinguishedName` for determinism) via the AD matching rule `LDAP_MATCHING_RULE_IN_CHAIN`
+  (`member:1.2.840.113556.1.4.1941:=<userDN>`), and `get_group_members(group)` returning a paged
+  `ADMembersPage` (`members`, `total_count`, `page_info`, `truncated`) of member distinguishedNames
+  that scales to large groups via LDAP ranged retrieval (`member;range=lo-hi`) with client-side
+  paging (`page_size`/`offset`) and an optional `max_members` cap; both accept an `ADUser`/`ADGroup`
+  or distinguishedName string and escape LDAP filter values (additive, backward-compatible)
+- `ADMembersPage` typed paged response model (exported from `python_apis.models`) and
+  `ADConnection.get_ranged_attribute` for LDAP ranged multi-valued attribute retrieval, with an
+  optional `limit` to early-stop range reads (so `max_members` bounds LDAP traffic on large groups)
+  and resilience to empty ranged echoes returned alongside the real bounded range
+- Contract tests for transitive group resolution, paged group member retrieval, and ranged-attribute
+  assembly
+- Canonical membership API usage example (`examples/membership_apis.py`)
 
 ### Fixed
 

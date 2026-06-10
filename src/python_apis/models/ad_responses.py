@@ -307,6 +307,28 @@ class ADSearchResponse(BaseModel, Sequence):
         return cls(entries=[ADEntry.from_legacy(payload) for payload in payloads])
 
 
+class ADMembersPage(BaseModel):
+    """Typed, paginated view of an AD group's members.
+
+    Returned by ``ADGroupService.get_group_members`` to expose a single page of
+    member distinguished names together with paging metadata. The model is the
+    response surface for both AD mechanisms used to read large groups: server
+    paged search and LDAP ranged attribute retrieval (``member;range=lo-hi``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    members: list[str] = Field(default_factory=list)
+    total_count: int = 0
+    truncated: bool = False
+    page_info: dict[str, Any] = Field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a plain, JSON-serializable ``dict`` of this page."""
+
+        return self.model_dump()
+
+
 __all__: list[str] = [
     # pylint: disable=duplicate-code
     "ADResponse",
@@ -314,4 +336,5 @@ __all__: list[str] = [
     "ADOperationEnvelope",
     "ADEntry",
     "ADSearchResponse",
+    "ADMembersPage",
 ]

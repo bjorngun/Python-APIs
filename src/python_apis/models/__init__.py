@@ -14,6 +14,8 @@ from python_apis.models.ad_responses import (
     ADEntry,
     ADSearchResponse,
     ADMembersPage,
+    ADBatchItemFailure,
+    ADBatchReadResult,
 )
 
 from python_apis.models.sap_employee import Employee
@@ -31,6 +33,8 @@ __all__ = [
     "ADEntry",
     "ADSearchResponse",
     "ADMembersPage",
+    "ADBatchItemFailure",
+    "ADBatchReadResult",
 
     "Employee",
 

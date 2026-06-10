@@ -92,6 +92,19 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Contract tests for transitive group resolution, paged group member retrieval, and ranged-attribute
   assembly
 - Canonical membership API usage example (`examples/membership_apis.py`)
+- Batch read v2 APIs with a partial-failure contract (issue #24): `get_users_from_ad_v2`,
+  `get_groups_from_ad_v2`, and `get_ous_from_ad_v2` on the AD services return an `ADBatchReadResult`
+  envelope (`returned_items`, `failed_items`, `totals`, optional `continuation_state`) instead of
+  silently dropping records that fail schema validation; each `failed_items` entry is an
+  `ADBatchItemFailure` carrying `identity` (dn/account id), `failure_classification`, `error_code`
+  (from the AD error taxonomy), and `raw_validation_details`. The existing `get_users_from_ad`,
+  `get_groups_from_ad`, and `get_ous_from_ad` list-returning methods are unchanged (additive,
+  backward-compatible)
+- `ADBatchReadResult` and `ADBatchItemFailure` typed response models (exported from
+  `python_apis.models`) and a shared `python_apis.services.batch_read.build_batch_read_result` helper
+- Contract tests for the batch read v2 APIs (all-success/all-failure/mixed/empty and unchanged
+  list-method signatures) and a canonical usage example (`examples/batch_read_v2.py`) plus migration
+  guide (`docs/migration/ad-batch-read-v2.md`)
 
 ### Fixed
 

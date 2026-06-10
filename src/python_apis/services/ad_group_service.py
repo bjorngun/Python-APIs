@@ -15,7 +15,9 @@ from pydantic import ValidationError
 from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADGroup, ADMembersPage, ADUser, base
+from python_apis.models import ADBatchReadResult
 from python_apis.schemas import ADGroupSchema
+from python_apis.services.batch_read import build_batch_read_result
 from python_apis.services.compatibility_mode import (
     finalize_ad_write_response,
     resolve_service_compatibility_mode,
@@ -206,6 +208,47 @@ class ADGroupService:
                 )
 
         return ad_groups
+
+    def get_groups_from_ad_v2(
+        self,
+        search_filter: str = '(objectClass=group)',
+        compatibility_mode: str | None = None,
+    ) -> ADBatchReadResult:
+        """Retrieve groups from AD as a partial-failure-aware batch result.
+
+        Unlike :meth:`get_groups_from_ad`, which silently drops records that
+        fail schema validation, this v2 method returns an
+        :class:`ADBatchReadResult` envelope exposing both successfully built
+        groups (``returned_items``) and structured per-record failures
+        (``failed_items``). The group-type name is annotated on each record
+        before validation, matching the legacy read path.
+
+        Args:
+            search_filter (str): LDAP search filter. Defaults to
+                ``'(objectClass=group)'``.
+            compatibility_mode (str | None): Optional compatibility mode override.
+
+        Returns:
+            ADBatchReadResult: Envelope of returned groups and failed records.
+        """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_groups_from_ad_v2", effective_mode
+        )
+
+        attributes = ADGroup.get_attribute_list()
+        ad_groups_dict = self.ad_connection.search(search_filter, attributes)
+
+        def _annotate(record: dict[str, Any]) -> dict[str, Any]:
+            self.set_group_type_name(record)
+            return record
+
+        return build_batch_read_result(
+            ad_groups_dict,
+            schema=ADGroupSchema,
+            model_factory=ADGroup,
+            preprocess=_annotate,
+        )
 
     def get_user_direct_groups(
         self,

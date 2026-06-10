@@ -13,8 +13,9 @@ from pydantic import ValidationError
 
 from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
-from python_apis.models import ADUser
+from python_apis.models import ADUser, ADBatchReadResult
 from python_apis.schemas import ADUserSchema
+from python_apis.services.batch_read import build_batch_read_result
 from python_apis.services.compatibility_mode import (
     finalize_ad_write_response,
     resolve_service_compatibility_mode,
@@ -212,6 +213,39 @@ class ADUserService:
 
         #ad_users = [ADUser(**x) for x in ad_users_dict]
         return ad_users
+
+    def get_users_from_ad_v2(
+        self,
+        search_filter: str = '(objectClass=user)',
+        compatibility_mode: str | None = None,
+    ) -> ADBatchReadResult:
+        """Retrieve users from AD as a partial-failure-aware batch result.
+
+        Unlike :meth:`get_users_from_ad`, which silently drops records that fail
+        schema validation, this v2 method returns an :class:`ADBatchReadResult`
+        envelope exposing both successfully built users (``returned_items``) and
+        structured per-record failures (``failed_items``).
+
+        Args:
+            search_filter (str): LDAP search filter. Defaults to
+                ``'(objectClass=user)'``.
+            compatibility_mode (str | None): Optional compatibility mode override.
+
+        Returns:
+            ADBatchReadResult: Envelope of returned users and failed records.
+        """
+        effective_mode = self._resolve_effective_mode(compatibility_mode)
+        self.logger.debug(
+            "Using AD compatibility mode '%s' for get_users_from_ad_v2", effective_mode
+        )
+
+        attributes = ADUser.get_attribute_list()
+        ad_users_dict = self.ad_connection.search(search_filter, attributes)
+        return build_batch_read_result(
+            ad_users_dict,
+            schema=ADUserSchema,
+            model_factory=ADUser,
+        )
 
     def get_all_sam_account_names(
         self,

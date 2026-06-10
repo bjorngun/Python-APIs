@@ -17,6 +17,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, computed_field
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import NoInspectionAvailable
 
 _ADResponseT = TypeVar("_ADResponseT", bound="ADResponse")
 
@@ -329,6 +331,104 @@ class ADMembersPage(BaseModel):
         return self.model_dump()
 
 
+def _sqlalchemy_to_dict(item: Any) -> dict[str, Any] | None:
+    """Return mapped column values for a SQLAlchemy ORM instance, else ``None``.
+
+    Batch read v2 ``returned_items`` hold SQLAlchemy models (``ADUser``,
+    ``ADGroup``, ``ADOrganizationalUnit``) that define neither ``to_dict`` nor
+    ``model_dump``. This converts such an instance to a plain ``dict`` of its
+    mapped column attributes so :meth:`ADBatchReadResult.to_dict` produces a
+    serializable payload instead of leaking the raw ORM object.
+    """
+
+    try:
+        state = sa_inspect(item)
+    except NoInspectionAvailable:
+        return None
+    mapper = getattr(state, "mapper", None)
+    if mapper is None:
+        return None
+    return {attr.key: getattr(item, attr.key) for attr in mapper.column_attrs}
+
+
+class ADBatchItemFailure(BaseModel):
+    """Structured description of a single record that failed a batch read.
+
+    Batch read v2 APIs never silently drop records that fail validation. Each
+    failing record is captured as one of these entries so callers can inspect
+    exactly which record failed and why.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    identity: str | None = Field(
+        default=None,
+        description="Best-effort identity of the failing record (dn / account id).",
+    )
+    failure_classification: str = Field(
+        default="validation",
+        description="Coarse failure category, e.g. 'validation'.",
+    )
+    error_code: str = Field(
+        description="Canonical error taxonomy code, e.g. 'AD_VALIDATION_ERROR'.",
+    )
+    raw_validation_details: Any = Field(
+        default=None,
+        description="Underlying validation/error details for diagnostics.",
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a plain, JSON-serializable ``dict`` of this failure."""
+
+        return self.model_dump()
+
+
+class ADBatchReadResult(BaseModel):
+    """Partial-failure-aware envelope returned by batch read v2 APIs.
+
+    Unlike the legacy ``list``-returning read methods, which discard records
+    that fail schema validation, this envelope surfaces both successfully built
+    records (``returned_items``) and structured failures (``failed_items``) so
+    no record is silently dropped.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    returned_items: list[Any] = Field(default_factory=list)
+    failed_items: list[ADBatchItemFailure] = Field(default_factory=list)
+    totals: dict[str, int] = Field(default_factory=dict)
+    continuation_state: Any = Field(
+        default=None,
+        description="Opaque continuation token; reserved for future paged reads.",
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a plain, JSON-serializable ``dict`` of this result.
+
+        ``returned_items`` are converted with ``to_dict`` when available so the
+        whole envelope round-trips to JSON-serializable primitives.
+        """
+
+        def _item_to_dict(item: Any) -> Any:
+            to_dict = getattr(item, "to_dict", None)
+            if callable(to_dict):
+                return to_dict()
+            model_dump = getattr(item, "model_dump", None)
+            if callable(model_dump):
+                return model_dump()
+            mapped = _sqlalchemy_to_dict(item)
+            if mapped is not None:
+                return mapped
+            return item
+
+        return {
+            "returned_items": [_item_to_dict(item) for item in self.returned_items],
+            "failed_items": [failure.to_dict() for failure in self.failed_items],
+            "totals": dict(self.totals),
+            "continuation_state": self.continuation_state,
+        }
+
+
 __all__: list[str] = [
     # pylint: disable=duplicate-code
     "ADResponse",
@@ -337,4 +437,6 @@ __all__: list[str] = [
     "ADEntry",
     "ADSearchResponse",
     "ADMembersPage",
+    "ADBatchItemFailure",
+    "ADBatchReadResult",
 ]

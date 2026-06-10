@@ -17,6 +17,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, computed_field
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import NoInspectionAvailable
 
 _ADResponseT = TypeVar("_ADResponseT", bound="ADResponse")
 
@@ -329,6 +331,26 @@ class ADMembersPage(BaseModel):
         return self.model_dump()
 
 
+def _sqlalchemy_to_dict(item: Any) -> dict[str, Any] | None:
+    """Return mapped column values for a SQLAlchemy ORM instance, else ``None``.
+
+    Batch read v2 ``returned_items`` hold SQLAlchemy models (``ADUser``,
+    ``ADGroup``, ``ADOrganizationalUnit``) that define neither ``to_dict`` nor
+    ``model_dump``. This converts such an instance to a plain ``dict`` of its
+    mapped column attributes so :meth:`ADBatchReadResult.to_dict` produces a
+    serializable payload instead of leaking the raw ORM object.
+    """
+
+    try:
+        state = sa_inspect(item)
+    except NoInspectionAvailable:
+        return None
+    mapper = getattr(state, "mapper", None)
+    if mapper is None:
+        return None
+    return {attr.key: getattr(item, attr.key) for attr in mapper.column_attrs}
+
+
 class ADBatchItemFailure(BaseModel):
     """Structured description of a single record that failed a batch read.
 
@@ -394,6 +416,9 @@ class ADBatchReadResult(BaseModel):
             model_dump = getattr(item, "model_dump", None)
             if callable(model_dump):
                 return model_dump()
+            mapped = _sqlalchemy_to_dict(item)
+            if mapped is not None:
+                return mapped
             return item
 
         return {

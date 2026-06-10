@@ -19,7 +19,11 @@ Run with: ``python examples/batch_read_v2.py``.
 """
 
 from python_apis.models import ADBatchReadResult
-from python_apis.services import ADUserService
+from python_apis.services import (
+    ADGroupService,
+    ADOrganizationalUnitService,
+    ADUserService,
+)
 
 
 def print_batch_result(result: ADBatchReadResult) -> None:
@@ -54,11 +58,26 @@ def read_users_v2(service: ADUserService) -> None:
     _ = result.to_dict()
 
 
-def main() -> None:
-    """Entry point: construct the service and run the batch read example."""
+def read_groups_v2(service: ADGroupService) -> None:
+    """Read groups as a partial-failure-aware batch envelope."""
 
-    service = ADUserService()
-    read_users_v2(service)
+    result = service.get_groups_from_ad_v2("(objectClass=group)")
+    print_batch_result(result)
+
+
+def read_ous_v2(service: ADOrganizationalUnitService) -> None:
+    """Read organizational units as a partial-failure-aware batch envelope."""
+
+    result = service.get_ous_from_ad_v2("(objectClass=organizationalUnit)")
+    print_batch_result(result)
+
+
+def main() -> None:
+    """Entry point: construct the services and run the batch read examples."""
+
+    read_users_v2(ADUserService())
+    read_groups_v2(ADGroupService())
+    read_ous_v2(ADOrganizationalUnitService())
 
 
 if __name__ == "__main__":

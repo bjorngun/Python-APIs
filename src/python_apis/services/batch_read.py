@@ -67,9 +67,15 @@ def build_batch_read_result(
 
     Returns:
         ADBatchReadResult: Envelope with ``returned_items`` for successfully
-        built records and ``failed_items`` for records that failed validation.
-        ``totals`` carries ``requested``/``returned``/``failed`` counts and
+        built records and ``failed_items`` for records that failed. ``totals``
+        carries ``requested``/``returned``/``failed`` counts and
         ``continuation_state`` is ``None`` (reserved for future paged reads).
+
+    The per-record error boundary is total: schema ``ValidationError`` is
+    classified as ``"validation"``, while any other exception raised by
+    ``preprocess`` or ``model_factory`` (for example a missing attribute during
+    annotation) is classified as ``"processing"``. Either way the failing record
+    is captured in ``failed_items`` rather than aborting the whole batch.
     """
 
     returned_items: list[Any] = []
@@ -89,6 +95,18 @@ def build_batch_read_result(
                     failure_classification="validation",
                     error_code=map_exception_to_error_code(exc),
                     raw_validation_details=exc.errors(),
+                )
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Preserve the partial-failure contract: a non-validation error on a
+            # single record (e.g. a missing attribute during preprocessing) must
+            # not abort the batch or drop already-built records.
+            failed_items.append(
+                ADBatchItemFailure(
+                    identity=resolve_identity(record, identity_fields),
+                    failure_classification="processing",
+                    error_code=map_exception_to_error_code(exc),
+                    raw_validation_details=str(exc),
                 )
             )
 

@@ -13,6 +13,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from python_apis.models import ADBatchItemFailure, ADBatchReadResult
+from python_apis.models.ad_user import ADUser
 from python_apis.services.batch_read import (
     build_batch_read_result,
     resolve_identity,
@@ -145,6 +146,49 @@ class TestBuildBatchReadResult(unittest.TestCase):
         self.assertEqual(len(result.returned_items), 1)
         self.assertEqual(result.returned_items[0].data['age'], 7)
 
+    def test_preprocess_error_classified_as_processing(self):
+        # A non-validation error in preprocess must not abort the batch; the
+        # bad record is captured as a 'processing' failure while valid records
+        # are still returned.
+        records = [
+            {'distinguishedName': 'cn=ok', 'age': 1},
+            {'distinguishedName': 'cn=bad', 'age': 2},
+        ]
+
+        def _explode(record):
+            if record['distinguishedName'] == 'cn=bad':
+                raise KeyError('groupType')
+            return record
+
+        result = build_batch_read_result(
+            records,
+            schema=_SampleSchema,
+            model_factory=_SampleModel,
+            preprocess=_explode,
+        )
+        self.assertEqual(len(result.returned_items), 1)
+        self.assertEqual(len(result.failed_items), 1)
+        failure = result.failed_items[0]
+        self.assertEqual(failure.identity, 'cn=bad')
+        self.assertEqual(failure.failure_classification, 'processing')
+        self.assertEqual(failure.error_code, 'AD_UNKNOWN')
+        self.assertEqual(
+            result.totals, {'requested': 2, 'returned': 1, 'failed': 1}
+        )
+
+    def test_model_factory_error_classified_as_processing(self):
+        records = [{'distinguishedName': 'cn=a', 'age': 1}]
+
+        def _factory(**_data):
+            raise RuntimeError('boom')
+
+        result = build_batch_read_result(
+            records, schema=_SampleSchema, model_factory=_factory
+        )
+        self.assertEqual(result.returned_items, [])
+        self.assertEqual(len(result.failed_items), 1)
+        self.assertEqual(result.failed_items[0].failure_classification, 'processing')
+
     def test_to_dict_is_serializable(self):
         records = [
             {'distinguishedName': 'cn=ok', 'age': 5},
@@ -159,6 +203,20 @@ class TestBuildBatchReadResult(unittest.TestCase):
             {'returned_items', 'failed_items', 'totals', 'continuation_state'},
         )
         self.assertEqual(payload['failed_items'][0]['error_code'], 'AD_VALIDATION_ERROR')
+
+    def test_to_dict_serializes_orm_returned_items(self):
+        # SQLAlchemy ORM models in returned_items (which define neither to_dict
+        # nor model_dump) must be converted to plain dicts, not leaked raw.
+        result = ADBatchReadResult(
+            returned_items=[ADUser(distinguishedName='cn=a', sAMAccountName='a')],
+            failed_items=[],
+            totals={'requested': 1, 'returned': 1, 'failed': 0},
+        )
+        payload = result.to_dict()
+        item = payload['returned_items'][0]
+        self.assertIsInstance(item, dict)
+        self.assertEqual(item['distinguishedName'], 'cn=a')
+        self.assertEqual(item['sAMAccountName'], 'a')
 
 
 def _env_getenv(env):

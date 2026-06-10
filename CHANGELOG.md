@@ -19,6 +19,33 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## Unreleased
 
+### Breaking Changes
+
+- **AD layer is now strict-only (issue #28, `semver:major`).** ADR 0001 Stage N+2 cleanup: the
+  compatibility-mode system and all legacy mirror behavior have been removed. See
+  `docs/migration/v-major-upgrade.md` for a full before/after upgrade guide.
+- Removed `ADConnection.get()` (the empty-string `defaultdict` read). Use
+  `ADConnection.get_v2()` → `ADGetResult` instead.
+- Removed the `result` and `message` legacy mirror keys from `ADOperationEnvelope`. Read
+  `ldap_result` and `exception_message` instead. `ADOperationEnvelope.to_response()` no longer
+  takes a `mode` argument and always emits the strict payload (equal to `to_dict()`).
+- AD write methods (`enable_user`, `disable_user`, `add_member`, `remove_member`,
+  `move_user_to_ou`, `modify_user`, `set_password`, `create_user`, `rename_user_cn`,
+  `modify_group`, `modify_ou`) now **always** return the strict envelope (no `result`/`message`
+  keys); the previous default raw-dict return is gone.
+- Removed the `compatibility_mode` parameter from every AD service constructor and method, plus
+  the `_resolve_effective_mode`/`get_compatibility_mode` helpers and `ADConnection.compatibility_mode`.
+- Removed mode infrastructure: `AD_COMPATIBILITY_MODES`, `AD_DEFAULT_COMPATIBILITY_MODE`,
+  `AD_COMPATIBILITY_ENV_VAR`, `resolve_ad_compatibility_mode`, `resolve_service_compatibility_mode`,
+  and `ADCompatibilityMode`. The `PYTHON_APIS_AD_COMPAT_MODE` environment variable is no longer read.
+  `python_apis.services.compatibility_mode` now exports only the strict-only
+  `finalize_ad_write_response`/`finalize_ad_read_response` (no `effective_mode` parameter).
+- Removed the `compatibility-modes` discovery capability and the `active_compatibility_mode` /
+  `describe_compatibility_modes` introspection helpers, and dropped the
+  `compatibility_mode_selection` migration example.
+- Read methods keep their historic typed return values; only the `compatibility_mode` parameter
+  was removed.
+
 ### Added
 
 - In-package discoverability toolkit for the modernized AD surface (issue #27): `python_apis.discovery` (capability registry via `list_capabilities`/`get_capability`, compatibility-mode introspection via `active_compatibility_mode`/`describe_compatibility_modes`, and a printable `quick_reference`), `python_apis.deprecation` (`warn_legacy` structured migration warnings, now emitted by legacy `ADConnection.get`), and `python_apis.migration_examples` (connection-free before/after snippets). All additive (`semver:minor`).

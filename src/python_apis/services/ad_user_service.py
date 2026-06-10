@@ -183,6 +183,24 @@ class ADUserService:
     ) -> list[ADUser]:
         """Retrieve users from Active Directory based on a search filter.
 
+        For new code prefer :meth:`get_users_from_ad_v2`, which returns a
+        structured batch result that surfaces per-record failures instead of
+        silently dropping records that fail validation.
+
+        Before (legacy, silent drops)::
+
+            users = service.get_users_from_ad("(objectClass=user)")
+            # invalid records are logged and omitted; callers cannot tell
+
+        After (structured, inspectable)::
+
+            result = service.get_users_from_ad_v2("(objectClass=user)")
+            for failure in result.failed_items:
+                handle(failure)
+
+        See ``python_apis.discovery.get_capability('batch-read-v2')`` and
+        ``python_apis.migration_examples.list_read_to_batch_v2()``.
+
         Args:
             search_filter (str): LDAP search filter. Defaults to '(objectClass=user)'.
 

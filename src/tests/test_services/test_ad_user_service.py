@@ -32,6 +32,7 @@ class TestADUserService(unittest.TestCase):
         self.addCleanup(patcher_getenv.stop)
 
         self.mock_ad_connection = MagicMock()
+        self.mock_ad_connection.last_retry_telemetry = None
         self.mock_sql_connection = MagicMock()
 
         patcher_ad_connection = patch('python_apis.services.ad_user_service.ADConnection', return_value=self.mock_ad_connection)
@@ -73,23 +74,26 @@ class TestADUserService(unittest.TestCase):
         service = ADUserService()
         user = MagicMock(spec=ADUser)
         user.distinguishedName = 'user_dn'
-        self.mock_ad_connection.add_member.return_value = {'result': 'success'}
+        self.mock_ad_connection.add_member.return_value = {'success': True, 'result': 'success'}
 
         result = service.add_member(user, 'group_dn')
 
         self.mock_ad_connection.add_member.assert_called_once_with('user_dn', 'group_dn')
-        self.assertEqual(result, {'result': 'success'})
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'success')
+        self.assertEqual(result['operation_kind'], 'write')
 
     def test_remove_member(self):
         service = ADUserService()
         user = MagicMock(spec=ADUser)
         user.distinguishedName = 'user_dn'
-        self.mock_ad_connection.remove_member.return_value = {'result': 'success'}
+        self.mock_ad_connection.remove_member.return_value = {'success': True, 'result': 'success'}
 
         result = service.remove_member(user, 'group_dn')
 
         self.mock_ad_connection.remove_member.assert_called_once_with('user_dn', 'group_dn')
-        self.assertEqual(result, {'result': 'success'})
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'success')
 
     def test_move_user_to_ou_success(self):
         service = ADUserService()
@@ -133,7 +137,8 @@ class TestADUserService(unittest.TestCase):
         )
         self.assertEqual(user.distinguishedName, 'CN=John Doe,OU=users,DC=example,DC=com')
         self.assertEqual(user.ou, 'OU=users,DC=example,DC=com')
-        self.assertEqual(result, {'success': False, 'result': 'error'})
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'error')
 
     def test_modify_user(self):
         service = ADUserService()
@@ -151,13 +156,9 @@ class TestADUserService(unittest.TestCase):
 
         result = service.modify_user(user, changes)
 
-        expected_result = {
-            'result': 'success',
-            'success': True,
-            'changes': {'department': 'old -> HR'}
-        }
-
-        self.assertEqual(result, expected_result)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'success')
+        self.assertEqual(result['changes'], {'department': 'old -> HR'})
 
     def test_set_password_success(self):
         service = ADUserService()
@@ -174,7 +175,8 @@ class TestADUserService(unittest.TestCase):
             call_args.args[:2],
             ('CN=John Doe,OU=users,DC=example,DC=com', 'Sup3rSecure!'),
         )
-        self.assertEqual(result, {'success': True, 'result': 'ok'})
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'ok')
 
     def test_set_password_failure_response(self):
         service = ADUserService()
@@ -185,7 +187,8 @@ class TestADUserService(unittest.TestCase):
 
         result = service.set_password(user, 'Temp1234!')
 
-        self.assertEqual(result, {'success': False, 'result': 'error'})
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'error')
 
     def test_set_password_exception(self):
         service = ADUserService()
@@ -196,7 +199,9 @@ class TestADUserService(unittest.TestCase):
 
         result = service.set_password(user, 'Temp1234!')
 
-        self.assertEqual(result, {'success': False, 'result': 'boom'})
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'boom')
+        self.assertEqual(result['exception_type'], 'LDAPException')
 
     def test_set_password_with_must_change_at_next_logon_success(self):
         service = ADUserService()
@@ -214,7 +219,8 @@ class TestADUserService(unittest.TestCase):
         self.mock_ad_connection.force_change_password_at_next_logon.assert_called_once_with(
             'CN=John Doe,OU=users,DC=example,DC=com', force=True
         )
-        self.assertEqual(result, {'success': True, 'result': 'ok'})
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'ok')
 
     def test_set_password_with_must_change_at_next_logon_force_fails(self):
         service = ADUserService()
@@ -228,10 +234,11 @@ class TestADUserService(unittest.TestCase):
 
         result = service.set_password(user, 'Sup3rSecure!', must_change_at_next_logon=True)
 
-        self.assertEqual(result, {
-            'success': False,
-            'result': {'password': 'ok', 'must_change': 'force error'},
-        })
+        self.assertFalse(result['success'])
+        self.assertEqual(
+            result['ldap_result'],
+            {'password': 'ok', 'must_change': 'force error'},
+        )
 
     def test_set_password_without_must_change_does_not_call_force(self):
         service = ADUserService()
@@ -244,7 +251,8 @@ class TestADUserService(unittest.TestCase):
 
         self.mock_ad_connection.set_password.assert_called_once()
         self.mock_ad_connection.force_change_password_at_next_logon.assert_not_called()
-        self.assertEqual(result, {'success': True, 'result': 'ok'})
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'ok')
 
     def test_create_user_success_with_defaults(self):
         service = ADUserService()
@@ -263,10 +271,9 @@ class TestADUserService(unittest.TestCase):
         passed_attrs = self.mock_ad_connection.add_entry.call_args[0][1]
         self.assertIn('objectClass', passed_attrs)
         self.assertIn('user', passed_attrs['objectClass'])
-        self.assertEqual(
-            result,
-            {'success': True, 'result': 'created', 'dn': 'CN=John Doe,OU=Users,DC=example,DC=com'},
-        )
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'created')
+        self.assertEqual(result['dn'], 'CN=John Doe,OU=Users,DC=example,DC=com')
 
     def test_create_user_add_entry_failure(self):
         service = ADUserService()
@@ -278,10 +285,9 @@ class TestADUserService(unittest.TestCase):
             {'sAMAccountName': 'jadoe'},
         )
 
-        self.assertEqual(
-            result,
-            {'success': False, 'result': 'error', 'dn': 'CN=Jane Doe,OU=Users,DC=example,DC=com'},
-        )
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'error')
+        self.assertEqual(result['dn'], 'CN=Jane Doe,OU=Users,DC=example,DC=com')
 
     def test_create_user_password_failure(self):
         service = ADUserService()
@@ -295,14 +301,12 @@ class TestADUserService(unittest.TestCase):
             set_password='Sup3rSecure!',
         )
 
+        self.assertFalse(result['success'])
         self.assertEqual(
-            result,
-            {
-                'success': False,
-                'result': {'create': 'created', 'password': 'pw err'},
-                'dn': 'CN=John Doe,OU=Users,DC=example,DC=com',
-            },
+            result['ldap_result'],
+            {'create': 'created', 'password': 'pw err'},
         )
+        self.assertEqual(result['dn'], 'CN=John Doe,OU=Users,DC=example,DC=com')
 
     def test_create_user_enable_failure(self):
         service = ADUserService()
@@ -319,20 +323,17 @@ class TestADUserService(unittest.TestCase):
             enable_after_create=True,
         )
 
+        self.assertFalse(result['success'])
         self.assertEqual(
-            result,
-            {
-                'success': False,
-                'result': {'create': 'created', 'enable': 'enable err'},
-                'dn': 'CN=John Doe,OU=Users,DC=example,DC=com',
-            },
+            result['ldap_result'],
+            {'create': 'created', 'enable': 'enable err'},
         )
+        self.assertEqual(result['dn'], 'CN=John Doe,OU=Users,DC=example,DC=com')
 
     def test_create_user_password_failure_strict_default_preserves_details(self):
-        # Regression: even when the service default mode is `strict` (which omits
-        # the legacy `result` key), the internal set_password sub-operation must
-        # still surface the LDAP failure details in the aggregated payload.
-        service = ADUserService(compatibility_mode='strict')
+        # Regression: the internal set_password sub-operation must surface the
+        # LDAP failure details in the aggregated payload's ``ldap_result``.
+        service = ADUserService()
         self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
         self.mock_ad_connection.set_password.return_value = {'success': False, 'result': 'pw err'}
 
@@ -350,9 +351,9 @@ class TestADUserService(unittest.TestCase):
         )
 
     def test_create_user_enable_failure_strict_default_preserves_details(self):
-        # Regression: a `strict` service default must not drop the enable
-        # sub-operation's LDAP failure details from the aggregated payload.
-        service = ADUserService(compatibility_mode='strict')
+        # Regression: the enable sub-operation's LDAP failure details must not be
+        # dropped from the aggregated payload's ``ldap_result``.
+        service = ADUserService()
         self.mock_ad_connection.add_entry.return_value = {'success': True, 'result': 'created'}
         self.mock_ad_connection.enable_user.return_value = {
             'success': False,
@@ -400,10 +401,9 @@ class TestADUserService(unittest.TestCase):
         )
 
         self.mock_ad_connection.force_change_password_at_next_logon.assert_called_once()
-        self.assertEqual(
-            result,
-            {'success': True, 'result': 'created', 'dn': 'CN=John Doe,OU=Users,DC=example,DC=com'},
-        )
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'created')
+        self.assertEqual(result['dn'], 'CN=John Doe,OU=Users,DC=example,DC=com')
 
     def test_create_user_with_must_change_password_force_fails(self):
         service = ADUserService()
@@ -421,17 +421,15 @@ class TestADUserService(unittest.TestCase):
             must_change_password_at_next_logon=True,
         )
 
+        self.assertFalse(result['success'])
         self.assertEqual(
-            result,
+            result['ldap_result'],
             {
-                'success': False,
-                'result': {
-                    'create': 'created',
-                    'password': {'password': 'pw ok', 'must_change': 'force err'},
-                },
-                'dn': 'CN=John Doe,OU=Users,DC=example,DC=com',
+                'create': 'created',
+                'password': {'password': 'pw ok', 'must_change': 'force err'},
             },
         )
+        self.assertEqual(result['dn'], 'CN=John Doe,OU=Users,DC=example,DC=com')
 
     def test_create_user_add_entry_exception(self):
         service = ADUserService()
@@ -443,10 +441,10 @@ class TestADUserService(unittest.TestCase):
             {'sAMAccountName': 'jdoe'},
         )
 
-        self.assertEqual(
-            result,
-            {'success': False, 'result': 'nope', 'dn': 'CN=John Doe,OU=Users,DC=example,DC=com'},
-        )
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'nope')
+        self.assertEqual(result['exception_type'], 'LDAPException')
+        self.assertEqual(result['dn'], 'CN=John Doe,OU=Users,DC=example,DC=com')
 
     def test_rename_user_cn_success(self):
         service = ADUserService()
@@ -472,15 +470,12 @@ class TestADUserService(unittest.TestCase):
         )
         
         # Verify the result
-        expected_result = {
-            'success': True,
-            'result': 'Operation completed successfully',
-            'old_dn': "CN=John Doe,OU=Users,OU=Company,DC=domain,DC=com",
-            'new_dn': "CN=John Smith,OU=Users,OU=Company,DC=domain,DC=com",
-            'old_cn': "John Doe",
-            'new_cn': "John Smith"
-        }
-        self.assertEqual(result, expected_result)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'Operation completed successfully')
+        self.assertEqual(result['old_dn'], "CN=John Doe,OU=Users,OU=Company,DC=domain,DC=com")
+        self.assertEqual(result['new_dn'], "CN=John Smith,OU=Users,OU=Company,DC=domain,DC=com")
+        self.assertEqual(result['old_cn'], "John Doe")
+        self.assertEqual(result['new_cn'], "John Smith")
 
     def test_rename_user_cn_failure(self):
         service = ADUserService()
@@ -500,11 +495,8 @@ class TestADUserService(unittest.TestCase):
         result = service.rename_user_cn(user, "John Smith")
         
         # Verify the result
-        expected_result = {
-            'success': False,
-            'result': 'Access denied'
-        }
-        self.assertEqual(result, expected_result)
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'Access denied')
 
     def test_rename_user_cn_no_dn(self):
         service = ADUserService()
@@ -517,11 +509,8 @@ class TestADUserService(unittest.TestCase):
         result = service.rename_user_cn(user, "John Smith")
         
         # Verify the result
-        expected_result = {
-            'success': False,
-            'result': 'User distinguishedName unavailable'
-        }
-        self.assertEqual(result, expected_result)
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'User distinguishedName unavailable')
         
         # Verify rename_dn was not called
         self.mock_ad_connection.rename_dn.assert_not_called()
@@ -537,11 +526,8 @@ class TestADUserService(unittest.TestCase):
         result = service.rename_user_cn(user, "John Smith")
         
         # Verify the result
-        expected_result = {
-            'success': False,
-            'result': 'Invalid distinguishedName format'
-        }
-        self.assertEqual(result, expected_result)
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'Invalid distinguishedName format')
         
         # Verify rename_dn was not called
         self.mock_ad_connection.rename_dn.assert_not_called()
@@ -561,11 +547,9 @@ class TestADUserService(unittest.TestCase):
         result = service.rename_user_cn(user, "John Smith")
         
         # Verify the result
-        expected_result = {
-            'success': False,
-            'result': 'LDAP server error'
-        }
-        self.assertEqual(result, expected_result)
+        self.assertFalse(result['success'])
+        self.assertEqual(result['ldap_result'], 'LDAP server error')
+        self.assertEqual(result['exception_type'], 'LDAPException')
 
     def test_get_users_from_db(self):
         service = ADUserService()
@@ -634,11 +618,8 @@ class TestADUserService(unittest.TestCase):
         )
         
         # Verify result
-        expected_result = {
-            'success': True,
-            'result': 'User enabled successfully'
-        }
-        self.assertEqual(result, expected_result)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'User enabled successfully')
 
     def test_enable_user_with_string(self):
         service = ADUserService()
@@ -657,11 +638,8 @@ class TestADUserService(unittest.TestCase):
         self.mock_ad_connection.enable_user.assert_called_once_with(distinguished_name)
         
         # Verify result
-        expected_result = {
-            'success': True,
-            'result': 'User enabled successfully'
-        }
-        self.assertEqual(result, expected_result)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'User enabled successfully')
 
     def test_disable_user_with_aduser(self):
         service = ADUserService()
@@ -684,11 +662,8 @@ class TestADUserService(unittest.TestCase):
         )
         
         # Verify result
-        expected_result = {
-            'success': True,
-            'result': 'User disabled successfully'
-        }
-        self.assertEqual(result, expected_result)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'User disabled successfully')
 
     def test_disable_user_with_string(self):
         service = ADUserService()
@@ -707,11 +682,8 @@ class TestADUserService(unittest.TestCase):
         self.mock_ad_connection.disable_user.assert_called_once_with(distinguished_name)
         
         # Verify result
-        expected_result = {
-            'success': True,
-            'result': 'User disabled successfully'
-        }
-        self.assertEqual(result, expected_result)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ldap_result'], 'User disabled successfully')
 
     def test_get_all_sam_account_names(self):
         service = ADUserService()

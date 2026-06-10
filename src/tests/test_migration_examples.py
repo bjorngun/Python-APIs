@@ -22,7 +22,6 @@ class TestMigrationExamples(unittest.TestCase):
             migration_examples.list_read_to_batch_v2,
             migration_examples.raw_multivalue_to_dual_form,
             migration_examples.error_handling_with_taxonomy,
-            migration_examples.compatibility_mode_selection,
         ):
             with self.subTest(func=func.__name__):
                 self.assertTrue(func().strip())

@@ -120,7 +120,7 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
 
 
 class TestEnvelopeRetryFields(unittest.TestCase):
-    """Validate retry fields surface on the envelope across compatibility modes."""
+    """Validate retry fields surface on the strict envelope."""
 
     def _build_envelope(self):
         return ADOperationEnvelope.from_operation(
@@ -133,19 +133,12 @@ class TestEnvelopeRetryFields(unittest.TestCase):
             retry_policy=AD_WRITE_RETRY_POLICY,
         )
 
-    def test_retry_fields_present_in_mixed_mode(self):
-        payload = self._build_envelope().to_response('mixed')
+    def test_retry_fields_present_on_strict_envelope(self):
+        payload = self._build_envelope().to_response()
 
         self.assertEqual(payload['retry_count'], 1)
         self.assertTrue(payload['retried'])
         self.assertTrue(payload['would_retry'])
-        self.assertTrue(payload['did_retry'])
-        self.assertEqual(payload['retry_policy'], AD_WRITE_RETRY_POLICY)
-
-    def test_retry_fields_present_in_strict_mode(self):
-        payload = self._build_envelope().to_response('strict')
-
-        self.assertEqual(payload['retry_count'], 1)
         self.assertTrue(payload['did_retry'])
         self.assertEqual(payload['retry_policy'], AD_WRITE_RETRY_POLICY)
         self.assertNotIn('result', payload)
@@ -174,32 +167,21 @@ class TestWriteResponseRetryIntegration(unittest.TestCase):
             policy=AD_WRITE_RETRY_POLICY,
         )
 
-    def test_legacy_mode_ignores_telemetry(self):
-        legacy = {'success': True, 'result': 'ok'}
-
-        payload = finalize_ad_write_response(
-            legacy,
-            effective_mode='legacy',
-            retry_telemetry=self.telemetry,
-        )
-
-        self.assertEqual(payload, legacy)
-
-    def test_mixed_mode_includes_telemetry(self):
+    def test_telemetry_included_on_strict_envelope(self):
         payload = finalize_ad_write_response(
             {'success': True, 'result': 'ok'},
-            effective_mode='mixed',
             retry_telemetry=self.telemetry,
         )
 
         self.assertEqual(payload['retry_count'], 1)
         self.assertTrue(payload['did_retry'])
         self.assertEqual(payload['retry_policy']['strategy'], 'rebind_once')
+        self.assertNotIn('result', payload)
+        self.assertNotIn('message', payload)
 
     def test_absent_telemetry_yields_defaults(self):
         payload = finalize_ad_write_response(
             {'success': True, 'result': 'ok'},
-            effective_mode='mixed',
         )
 
         self.assertEqual(payload['retry_count'], 0)
@@ -221,34 +203,21 @@ class TestReadResponseRetryIntegration(unittest.TestCase):
             policy=AD_READ_RETRY_POLICY,
         )
 
-    def test_legacy_mode_returns_raw_result(self):
-        result = ['a', 'b']
-
-        returned = finalize_ad_read_response(
-            result,
-            effective_mode='legacy',
-            retry_telemetry=self.telemetry,
-        )
-
-        self.assertIs(returned, result)
-
-    def test_mixed_mode_builds_read_envelope(self):
+    def test_builds_read_envelope_with_telemetry(self):
         payload = finalize_ad_read_response(
             ['a', 'b'],
-            effective_mode='mixed',
             retry_telemetry=self.telemetry,
         )
 
         self.assertEqual(payload['operation_kind'], 'read')
-        self.assertEqual(payload['result'], ['a', 'b'])
+        self.assertEqual(payload['ldap_result'], ['a', 'b'])
         self.assertEqual(payload['retry_count'], 1)
         self.assertTrue(payload['did_retry'])
         self.assertEqual(payload['retry_policy'], AD_READ_RETRY_POLICY)
 
-    def test_strict_mode_omits_legacy_mirrors(self):
+    def test_strict_envelope_omits_legacy_mirrors(self):
         payload = finalize_ad_read_response(
             ['a', 'b'],
-            effective_mode='strict',
         )
 
         self.assertEqual(payload['operation_kind'], 'read')
@@ -259,7 +228,6 @@ class TestReadResponseRetryIntegration(unittest.TestCase):
     def test_failure_defaults_success_from_exception(self):
         payload = finalize_ad_read_response(
             [],
-            effective_mode='mixed',
             exception=LDAPCommunicationError('down'),
         )
 
@@ -312,7 +280,7 @@ class TestLocalValidationTelemetrySuppression(unittest.TestCase):
     def test_rename_missing_dn_does_not_report_stale_retry(self):
         user = SimpleNamespace(distinguishedName=None)
 
-        payload = self.service.rename_user_cn(user, 'NewName', compatibility_mode='mixed')
+        payload = self.service.rename_user_cn(user, 'NewName')
 
         self.assertFalse(payload['success'])
         self.assertEqual(payload['retry_count'], 0)
@@ -323,7 +291,7 @@ class TestLocalValidationTelemetrySuppression(unittest.TestCase):
     def test_rename_invalid_dn_does_not_report_stale_retry(self):
         user = SimpleNamespace(distinguishedName='CN=NoComma')
 
-        payload = self.service.rename_user_cn(user, 'NewName', compatibility_mode='strict')
+        payload = self.service.rename_user_cn(user, 'NewName')
 
         self.assertFalse(payload['success'])
         self.assertEqual(payload['retry_count'], 0)

@@ -1,16 +1,13 @@
 # test_ad_api.py
 import unittest
 from unittest.mock import patch, MagicMock
-import os
 import ssl
 from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 from python_apis.apis.ad_api import (
     ADConnection,
-    AD_COMPATIBILITY_ENV_VAR,
     ADConnectionError,
     ADMissingServersError,
-    resolve_ad_compatibility_mode,
 )
 
 
@@ -31,12 +28,6 @@ class TestADConnection(unittest.TestCase):
         conn = ADConnection(self.servers, self.search_base)
         self.assertEqual(conn.search_base, self.search_base)
         self.assertIsNotNone(conn.connection)
-        self.assertEqual(conn.compatibility_mode, 'legacy')
-
-    def test_init_with_explicit_compatibility_mode(self):
-        conn = ADConnection(self.servers, self.search_base, compatibility_mode='strict')
-
-        self.assertEqual(conn.compatibility_mode, 'strict')
 
     def test_init_no_servers_raises_exception(self):
         with self.assertRaises(ADMissingServersError):
@@ -73,33 +64,6 @@ class TestADConnection(unittest.TestCase):
         self.assertEqual(results[0]['cn'], 'John Doe')
         self.mock_connection.extend.standard.paged_search.assert_called_once()
 
-    def test_get_with_results(self):
-        ad_conn = ADConnection(self.servers, self.search_base)
-        mock_result = [{'attributes': {'cn': 'John Doe'}}]
-        self.mock_connection.extend.standard.paged_search.return_value = iter(mock_result)
-
-        result = ad_conn.get('(objectClass=user)', ['cn'])
-
-        self.assertEqual(result['cn'], 'John Doe')
-
-    def test_get_no_results(self):
-        ad_conn = ADConnection(self.servers, self.search_base)
-        self.mock_connection.extend.standard.paged_search.return_value = iter([])
-
-        result = ad_conn.get('(objectClass=user)', ['cn'])
-
-        self.assertEqual(result['cn'], '')  # defaultdict returns empty string
-
-    def test_get_emits_deprecation_warning(self):
-        ad_conn = ADConnection(self.servers, self.search_base)
-        mock_result = [{'attributes': {'cn': 'John Doe'}}]
-        self.mock_connection.extend.standard.paged_search.return_value = iter(mock_result)
-
-        with self.assertWarns(DeprecationWarning) as ctx:
-            ad_conn.get('(objectClass=user)', ['cn'])
-
-        self.assertIn('get_v2', str(ctx.warning))
-
     def test_get_v2_with_results(self):
         ad_conn = ADConnection(self.servers, self.search_base)
         mock_result = [{'attributes': {'cn': 'John Doe'}}]
@@ -135,14 +99,6 @@ class TestADConnection(unittest.TestCase):
         self.assertIsNone(result.item)
         self.assertEqual(result.not_found_reason, 'no_match')
         self.assertEqual(result.error_code, 'AD_NOT_FOUND')
-
-    def test_get_v2_does_not_change_legacy_get(self):
-        ad_conn = ADConnection(self.servers, self.search_base)
-        self.mock_connection.extend.standard.paged_search.return_value = iter([])
-
-        # Legacy get still returns an empty-default mapping, not an ADGetResult.
-        legacy = ad_conn.get('(objectClass=user)', ['cn'])
-        self.assertEqual(legacy['cn'], '')
 
     def test_modify(self):
         ad_conn = ADConnection(self.servers, self.search_base)
@@ -356,55 +312,6 @@ class TestAutoReconnect(unittest.TestCase):
 
         with self.assertRaises(ADConnectionError):
             ad_conn.rebind()
-
-
-class TestCompatibilityModeResolution(unittest.TestCase):
-    """Tests for compatibility mode resolution precedence and fallback."""
-
-    def setUp(self):
-        self.env_var = AD_COMPATIBILITY_ENV_VAR
-        self.original_env = os.environ.get(self.env_var)
-
-    def tearDown(self):
-        env = os.environ
-        if self.original_env is None:
-            env.pop(self.env_var, None)
-            return
-        env[self.env_var] = self.original_env
-
-    def test_per_call_mode_has_highest_precedence(self):
-        os.environ[self.env_var] = 'strict'
-
-        result = resolve_ad_compatibility_mode(
-            per_call_mode='mixed',
-            service_mode='legacy',
-        )
-
-        self.assertEqual(result, 'mixed')
-
-    def test_service_mode_used_when_per_call_missing(self):
-        os.environ[self.env_var] = 'strict'
-
-        result = resolve_ad_compatibility_mode(service_mode='mixed')
-
-        self.assertEqual(result, 'mixed')
-
-    def test_environment_mode_used_when_no_explicit_modes(self):
-        os.environ[self.env_var] = 'strict'
-
-        result = resolve_ad_compatibility_mode()
-
-        self.assertEqual(result, 'strict')
-
-    def test_legacy_fallback_for_invalid_mode(self):
-        result = resolve_ad_compatibility_mode(per_call_mode='invalid')
-
-        self.assertEqual(result, 'legacy')
-
-    def test_mode_values_are_normalized(self):
-        result = resolve_ad_compatibility_mode(per_call_mode='  MiXeD  ')
-
-        self.assertEqual(result, 'mixed')
 
 
 if __name__ == '__main__':

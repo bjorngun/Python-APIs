@@ -6,7 +6,6 @@ preserve legacy dictionary access and JSON serializability.
 
 import json
 import unittest
-from collections import defaultdict
 
 from python_apis.models import (
     ADEntry,
@@ -90,14 +89,15 @@ class TestADEntry(unittest.TestCase):
         with self.assertRaises(KeyError):
             _ = self.entry["does_not_exist"]
 
-    def test_preserves_defaultdict_no_result_behavior(self):
-        # ADConnection.get() returns defaultdict(lambda: '') on no match;
-        # missing-key indexing must keep returning the legacy empty string.
-        empty_get = defaultdict(lambda: "")
-        entry = ADEntry.from_legacy(empty_get)
+    def test_missing_key_raises_no_defaultdict_fallback(self):
+        # Stage 3 removed the defaultdict empty-string fallback; missing-key
+        # indexing now raises KeyError instead of returning "".
+        entry = ADEntry.from_legacy({})
 
-        self.assertEqual(entry["cn"], "")
-        self.assertEqual(entry["anything"], "")
+        with self.assertRaises(KeyError):
+            _ = entry["cn"]
+        with self.assertRaises(KeyError):
+            _ = entry["anything"]
 
     def test_lossless_round_trip(self):
         self.assertEqual(self.entry.to_dict(), self.legacy)
@@ -134,7 +134,7 @@ class TestADSearchResponse(unittest.TestCase):
 
 
 class TestADOperationEnvelope(unittest.TestCase):
-    """Validate the operation envelope model, builder, and mode-aware output."""
+    """Validate the operation envelope model, builder, and strict output."""
 
     def test_required_fields_and_defaults(self):
         envelope = ADOperationEnvelope(success=True, operation_kind="write")
@@ -149,20 +149,6 @@ class TestADOperationEnvelope(unittest.TestCase):
         self.assertIs(envelope.retried, False)
         self.assertIsNone(envelope.error_code)
 
-    def test_legacy_mirrors_match_modern_fields(self):
-        envelope = ADOperationEnvelope(
-            success=True,
-            operation_kind="write",
-            ldap_result={"description": "success"},
-            exception_message="none",
-        )
-
-        # Mirrors readable via attribute and Mapping access.
-        self.assertEqual(envelope.result, envelope.ldap_result)
-        self.assertEqual(envelope.message, envelope.exception_message)
-        self.assertEqual(envelope["result"], envelope.ldap_result)
-        self.assertEqual(envelope["message"], envelope.exception_message)
-
     def test_json_serializable(self):
         envelope = ADOperationEnvelope(
             success=True,
@@ -171,8 +157,9 @@ class TestADOperationEnvelope(unittest.TestCase):
         )
         payload = json.loads(envelope.model_dump_json())
 
-        self.assertEqual(payload["result"], {"description": "success"})
         self.assertEqual(payload["ldap_result"], {"description": "success"})
+        self.assertNotIn("result", payload)
+        self.assertNotIn("message", payload)
 
     def test_from_operation_success(self):
         envelope = ADOperationEnvelope.from_operation(
@@ -195,7 +182,6 @@ class TestADOperationEnvelope(unittest.TestCase):
         self.assertIs(envelope.success, False)
         self.assertEqual(envelope.exception_type, "ValueError")
         self.assertEqual(envelope.exception_message, "boom")
-        self.assertEqual(envelope.message, "boom")
 
     def test_from_operation_explicit_success_overrides_default(self):
         envelope = ADOperationEnvelope.from_operation(
@@ -206,42 +192,23 @@ class TestADOperationEnvelope(unittest.TestCase):
 
         self.assertIs(envelope.success, False)
 
-    def test_to_response_legacy_includes_mirrors(self):
+    def test_to_response_omits_legacy_mirrors(self):
         envelope = ADOperationEnvelope.from_operation(
             operation_kind="write",
             ldap_result={"description": "success"},
         )
-        payload = envelope.to_response("legacy")
-
-        self.assertIn("result", payload)
-        self.assertIn("message", payload)
-        self.assertEqual(payload["result"], payload["ldap_result"])
-
-    def test_to_response_mixed_includes_mirrors(self):
-        envelope = ADOperationEnvelope.from_operation(operation_kind="write")
-        payload = envelope.to_response("mixed")
-
-        self.assertIn("result", payload)
-        self.assertIn("message", payload)
-
-    def test_to_response_strict_omits_mirrors(self):
-        envelope = ADOperationEnvelope.from_operation(
-            operation_kind="write",
-            ldap_result={"description": "success"},
-        )
-        payload = envelope.to_response("strict")
+        payload = envelope.to_response()
 
         self.assertNotIn("result", payload)
         self.assertNotIn("message", payload)
         self.assertIn("ldap_result", payload)
         self.assertIn("success", payload)
 
-    def test_to_response_unknown_mode_falls_back_to_legacy(self):
+    def test_to_response_equals_to_dict(self):
         envelope = ADOperationEnvelope.from_operation(operation_kind="write")
-        payload = envelope.to_response("nonsense")
 
-        self.assertIn("result", payload)
-        self.assertIn("message", payload)
+        self.assertEqual(envelope.to_response(), envelope.to_dict())
+        self.assertEqual(envelope.to_response(), envelope.model_dump())
 
 
 if __name__ == "__main__":

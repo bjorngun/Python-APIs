@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   parity, shape invariants), a migration guide documenting the normalization rules
   (`docs/migration/ad-multivalue-dual-form.md`), and a usage example
   (`examples/multivalue_dual_form.py`)
+- Explicit single-object `get_v2` AD read with a typed not-found result (issue #26):
+  `ADConnection.get_v2(search_filter, attributes)` returns an `ADGetResult` envelope (exported from
+  `python_apis.models`) with an explicit `found` flag, the matched `item`, a deterministic
+  `not_found_reason` (`"no_match"`), and a canonical `error_code` (`"AD_NOT_FOUND"`), so callers can
+  distinguish "absent" from "present but empty". Not-found semantics are deterministic (zero rows →
+  not found; one or more rows → first match). The legacy `ADConnection.get` behavior is unchanged
+  (additive, backward-compatible)
+- Contract tests for `ADGetResult` and `get_v2` (found, first-of-many, not-found, unchanged legacy
+  `get`), a migration guide (`docs/migration/ad-get-v2.md`), and a usage example with a migration
+  helper (`examples/get_v2.py`)
 
 ### Fixed
 

@@ -18,6 +18,12 @@ from python_apis.models.ad_responses import (
     ADBatchReadResult,
 )
 
+from python_apis.models.multivalue import (
+    ADMultiValue,
+    ADMultiValueMetadata,
+    normalize_multivalue,
+)
+
 from python_apis.models.sap_employee import Employee
 
 from python_apis.models.jira_models import JiraComponent, JiraIssue, JiraRequestType
@@ -35,6 +41,10 @@ __all__ = [
     "ADMembersPage",
     "ADBatchItemFailure",
     "ADBatchReadResult",
+
+    "ADMultiValue",
+    "ADMultiValueMetadata",
+    "normalize_multivalue",
 
     "Employee",
 

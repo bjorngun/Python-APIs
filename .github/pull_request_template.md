@@ -39,7 +39,8 @@ Otherwise:
 When in doubt about compatibility, default to `semver:major` and call it out in the PR.
 
 - [ ] My selected label matches the
-  [Versioning and Release Flow](../README.md#versioning-and-release-flow) policy.
+  [Versioning and Release Flow](https://github.com/bjorngun/Python-APIs/blob/main/README.md#versioning-and-release-flow)
+  policy.
 
 ## Task-Bounded Commits (for planned work)
 

@@ -5,10 +5,45 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 jobs:
+  validate-semver-label:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - name: Require exactly one SemVer label
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      run: |
+        set -euo pipefail
+
+        semver_labels=$(printf '%s' "$PR_LABELS" | jq -r '.[] | select(startswith("semver:"))')
+        semver_labels=$(printf '%s\n' "$semver_labels" | sed '/^$/d')
+
+        semver_count=$(printf '%s\n' "$semver_labels" | sed '/^$/d' | wc -l | tr -d ' ')
+        labels_display=$(printf '%s' "$semver_labels" | paste -sd ',' -)
+        if [ "$semver_count" -ne 1 ]; then
+          echo "::error::PR #$PR_NUMBER must have exactly one SemVer label (semver:major, semver:minor, or semver:none)."
+          echo "::error::Found ${semver_count} SemVer label(s): ${labels_display:-<none>}. See the Versioning and Release Flow section in README.md."
+          exit 1
+        fi
+
+        case "$semver_labels" in
+          semver:major|semver:minor|semver:none)
+            echo "PR #$PR_NUMBER has a valid SemVer label: $semver_labels"
+            ;;
+          *)
+            echo "::error::PR #$PR_NUMBER has an unsupported SemVer label: $semver_labels."
+            echo "::error::Allowed SemVer labels are semver:major, semver:minor, or semver:none. See the Versioning and Release Flow section in README.md."
+            exit 1
+            ;;
+        esac
+
   check-links:
     runs-on: ubuntu-latest
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
     steps:
     - uses: actions/checkout@v4.2.2
 
@@ -27,6 +62,7 @@ jobs:
 
   test:
     runs-on: windows-latest
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
     strategy:
       matrix:
         python-version: ['3.12', '3.14']

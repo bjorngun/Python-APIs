@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Added
 
+- PR-time `validate-semver-label` CI check (issue #29, `semver:none`) that fails a pull request
+  early when it is missing a SemVer label or has more than one, before merge.
 - In-package discoverability toolkit for the modernized AD surface (issue #27): `python_apis.discovery` (capability registry via `list_capabilities`/`get_capability` and a printable `quick_reference`), `python_apis.deprecation` (`warn_legacy` structured migration warnings), and `python_apis.migration_examples` (connection-free before/after snippets). All additive (`semver:minor`).
 - rename_user_cn functionality to ADUserService for renaming user common names
 - Python 3.14 support and optimized CI/CD workflows  

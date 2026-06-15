@@ -234,6 +234,8 @@ This project uses label-driven SemVer for releases from `main`.
   - `semver:none` -> no version bump and no publish.
 - The publish workflow resolves the bump type from the merged PR label and fails if the label is
   missing or ambiguous.
+- PR CI also runs a `validate-semver-label` check that fails early when a pull request is missing a
+  SemVer label or has more than one, so labeling problems are caught before merge.
 - Breaking changes must use `semver:major`.
 
 Examples:

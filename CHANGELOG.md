@@ -163,6 +163,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   breaking-change detection guidance and a checklist link to the README
   `Versioning and Release Flow` policy, so contributors and agents can classify release impact
   without external docs.
+- CI `validate-skills` job (issue #31, `semver:none`) fails the build when
+  `.github/skills/plan-issue/SKILL.md` or the sibling `pr-create`/`pr-comments` skill files are
+  missing, and `README.md`/`.github/copilot-instructions.md` now tie the `/plan-issue <number>`
+  slash-command workflow to that guardrail.
 
 ## [v0.4.9](https://github.com/bjorngun/Python-APIs/releases/tag/v0.4.9) - 2025-10-27
 

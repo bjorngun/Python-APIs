@@ -147,6 +147,8 @@ This repository includes a custom planning skill:
 - Path: `.github/skills/plan-issue/SKILL.md`
 - Command intent: `/plan-issue <number>` targets GitHub issue `#<number>` in this repository.
   - Example: `/plan-issue 100` means GitHub issue `#100` for this repo.
+- CI guardrail: the `validate-skills` workflow job fails if this skill file (or the sibling
+  `pr-create`/`pr-comments` skill files) is missing.
 
 Agent expectations while executing a plan:
 

@@ -41,6 +41,36 @@ jobs:
             ;;
         esac
 
+  validate-skills:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4.2.2
+
+    - name: Require repository skill files to exist
+      run: |
+        set -euo pipefail
+
+        required_skills=(
+          ".github/skills/plan-issue/SKILL.md"
+          ".github/skills/pr-create/SKILL.md"
+          ".github/skills/pr-comments/SKILL.md"
+        )
+
+        missing=0
+        for skill in "${required_skills[@]}"; do
+          if [ -f "$skill" ]; then
+            echo "Found required skill file: $skill"
+          else
+            echo "::error file=$skill::Required repository skill file is missing: $skill"
+            missing=1
+          fi
+        done
+
+        if [ "$missing" -ne 0 ]; then
+          echo "::error::One or more required repository skill files are missing. See the Planning Workflow section in README.md."
+          exit 1
+        fi
+
   check-links:
     runs-on: ubuntu-latest
     if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
@@ -88,7 +118,7 @@ jobs:
       run: python -m unittest discover -s src/tests -p "test_*.py" -v
 
   publish:
-    needs: [check-links, test]
+    needs: [validate-skills, check-links, test]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:

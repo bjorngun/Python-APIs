@@ -256,6 +256,10 @@ This project includes a repo skill at `.github/skills/plan-issue/SKILL.md`.
 - Plan files are created under `.planning/` for local tracking and are git-ignored.
 - The plan protocol requires committing completed work **after each task**.
 
+The CI `validate-skills` check fails the build if `.github/skills/plan-issue/SKILL.md` (or the
+sibling `pr-create`/`pr-comments` skill files) is missing, so the documented slash-command workflow
+cannot be silently removed or relocated.
+
 If a task is large, break it into smaller numbered tasks so each completed task can be committed
 cleanly.
 

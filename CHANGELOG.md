@@ -159,6 +159,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Updated Python version matrix to support 3.10-3.14
 - Publish workflow now derives version bump from merged PR SemVer label and skips publish for
   `semver:none`
+- PR template SemVer section (issue #30, `semver:none`) now includes self-contained
+  breaking-change detection guidance and a checklist link to the README
+  `Versioning and Release Flow` policy, so contributors and agents can classify release impact
+  without external docs.
 
 ## [v0.4.9](https://github.com/bjorngun/Python-APIs/releases/tag/v0.4.9) - 2025-10-27
 

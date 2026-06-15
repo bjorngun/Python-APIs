@@ -155,7 +155,9 @@ Agent expectations while executing a plan:
 - Use the plan file in `.planning/` as the authoritative task tracker.
 - Mark task status as work progresses (`In progress`, `Done`, `Blocked`).
 - Commit immediately after each completed task.
-- Keep commits scoped to task boundaries with clear issue-linked messages.
+- Keep commits scoped to task boundaries with clear issue-linked messages using the format
+  `{type}(#{issue}): task {N} - short description` (for example,
+  `feat(#123): task 2 - add membership paging contract`).
 
 For AD response modernization and compatibility rollout work, follow ADR 0001 as the primary
 policy source: `docs/adr/0001-ad-response-modernization.md`.

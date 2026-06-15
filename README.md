@@ -263,6 +263,25 @@ cannot be silently removed or relocated.
 If a task is large, break it into smaller numbered tasks so each completed task can be committed
 cleanly.
 
+### Commit cadence for plan-driven work
+
+Commit **immediately after each completed plan task** — do not batch multiple tasks into one
+commit. Task-bounded commits keep history traceable and make rollback or cherry-pick of a single
+task straightforward. Each commit message should reference the issue number and the task number:
+
+```text
+{type}(#{issue}): task {N} - short description
+```
+
+For example:
+
+```text
+feat(#123): task 2 - add membership paging contract
+```
+
+The pull request template's **Task-Bounded Commits (for planned work)** checklist confirms this
+cadence was followed before review.
+
 ## Architecture Decision Records
 
 - AD response modernization policy is defined in [ADR 0001](docs/adr/0001-ad-response-modernization.md).

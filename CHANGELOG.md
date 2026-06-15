@@ -167,6 +167,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   `.github/skills/plan-issue/SKILL.md` or the sibling `pr-create`/`pr-comments` skill files are
   missing, and `README.md`/`.github/copilot-instructions.md` now tie the `/plan-issue <number>`
   slash-command workflow to that guardrail.
+- Documented the commit-after-each-task cadence for plan-driven work (issue #32, `semver:none`):
+  `README.md` and `.github/copilot-instructions.md` now include the example commit message format
+  `{type}(#{issue}): task {N} - short description`, consistent with the PR template Task-Bounded
+  Commits checklist.
 
 ## [v0.4.9](https://github.com/bjorngun/Python-APIs/releases/tag/v0.4.9) - 2025-10-27
 

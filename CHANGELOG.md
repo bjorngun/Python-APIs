@@ -147,6 +147,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Contract tests for `ADGetResult` and `get_v2` (found, first-of-many, not-found, unchanged legacy
   `get`), a migration guide (`docs/migration/ad-get-v2.md`), and a usage example with a migration
   helper (`examples/get_v2.py`)
+- Downstream consumer handover guide (`docs/migration/handover-summary.md`, `semver:none`)
+  summarizing the AD modernization (issues #16-#30) for tools upgrading from a pre-`1.0.0`
+  (`0.4.x`) pin, with verified version facts, mandatory breaking-change migrations, and the
+  additive v2 APIs to adopt
 
 ### Fixed
 

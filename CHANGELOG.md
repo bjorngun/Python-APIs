@@ -171,6 +171,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   `README.md` and `.github/copilot-instructions.md` now include the example commit message format
   `{type}(#{issue}): task {N} - short description`, consistent with the PR template Task-Bounded
   Commits checklist.
+- Added a downstream consumer handover guide (`docs/migration/handover-summary.md`, `semver:none`)
+  summarizing the AD modernization (issues #16-#30) for tools upgrading from a pre-`1.0.0`
+  (`0.4.x`) pin, with verified version facts, mandatory breaking-change migrations, and the
+  additive v2 APIs to adopt.
 
 ## [v0.4.9](https://github.com/bjorngun/Python-APIs/releases/tag/v0.4.9) - 2025-10-27
 

@@ -2,7 +2,9 @@
 
 > **Audience:** Teams whose tools depend on `python-apis` but have **not** upgraded since before
 > the AD modernization sprint (i.e. still on the `0.4.x` line or earlier).
+>
 > **Date:** 2026-06-16
+>
 > **Authoritative policy:** [ADR 0001](../adr/0001-ad-response-modernization.md)
 
 ---

@@ -39,6 +39,7 @@ Dependencies:
 """
 
 from python_apis.apis.ad_api import (
+    ADBindError,
     ADConnection,
     AD_READ_RETRY_POLICY,
     AD_WRITE_RETRY_POLICY,
@@ -48,6 +49,7 @@ from python_apis.apis.jira_api import JiraConnection
 from python_apis.apis.sql_api import SQLConnection
 
 __all__ = [
+    "ADBindError",
     "ADConnection",
     "AD_READ_RETRY_POLICY",
     "AD_WRITE_RETRY_POLICY",

@@ -20,7 +20,11 @@ from ldap3.utils.log import set_library_log_detail_level, BASIC
 from ldap3 import (ALL_ATTRIBUTES, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, GSSAPI,
                    Connection, Server, ServerPool, Tls)
-from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
+from ldap3.core.exceptions import (
+    LDAPCommunicationError,
+    LDAPException,
+    LDAPSessionTerminatedByServerError,
+)
 
 from python_apis.models.ad_get import ADGetResult
 
@@ -55,7 +59,7 @@ AD_WRITE_RETRY_POLICY = _build_retry_policy("write", 0)
 
 
 @dataclass(frozen=True)
-class RetryTelemetry:
+class RetryTelemetry:  # pylint: disable=too-many-instance-attributes
     """Immutable record of the retry outcome for a single AD operation.
 
     Captured by :func:`_auto_reconnect` on every decorated call and exposed via
@@ -70,6 +74,12 @@ class RetryTelemetry:
     would_retry: bool = False
     recovered: bool = False
     policy: dict[str, Any] = field(default_factory=dict)
+    attempt_count: int = 1
+    operation_name: str | None = None
+    failed_server: str | None = None
+    selected_server: str | None = None
+    elapsed_seconds: float = 0
+    exception_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,24 +99,36 @@ def _auto_reconnect(operation_kind: str = "write"):
 
     def decorator(method):
         @functools.wraps(method)
-        def wrapper(self, *args, **kwargs):
+        def wrapper(self, *args, **kwargs):  # pylint: disable=too-many-locals
+            started_at = time.monotonic()
+            attempt_count = 0
             retry_count = 0
             retried = False
             would_retry = False
             recovered = False
+            failed_server_token = None
+            exception_type = None
             retry_limit = (
                 self.read_retry_count
                 if operation_kind == "read"
                 else self.write_retry_count
             )
             policy = _build_retry_policy(operation_kind, retry_limit)
+            policy["backoff_seconds"] = (
+                self.read_retry_backoff_seconds if operation_kind == "read" else 0
+            )
             try:
                 while True:
+                    attempt_count += 1
                     try:
                         result = method(self, *args, **kwargs)
                         recovered = retry_count > 0
                         return result
                     except _RECOVERABLE_EXCEPTIONS as exc:
+                        exception_type = type(exc).__name__
+                        failed_server_token = self._mask_server_identifier(  # pylint: disable=protected-access
+                            self._selected_server  # pylint: disable=protected-access
+                        )
                         if retry_count >= retry_limit:
                             raise
                         would_retry = True
@@ -140,6 +162,14 @@ def _auto_reconnect(operation_kind: str = "write"):
                     would_retry=would_retry,
                     recovered=recovered,
                     policy=dict(policy),
+                    attempt_count=attempt_count,
+                    operation_name=method.__name__,
+                    failed_server=failed_server_token,
+                    selected_server=self._mask_server_identifier(  # pylint: disable=protected-access
+                        self._selected_server  # pylint: disable=protected-access
+                    ),
+                    elapsed_seconds=max(0, time.monotonic() - started_at),
+                    exception_type=exception_type,
                 )
 
         return wrapper
@@ -149,6 +179,22 @@ def _auto_reconnect(operation_kind: str = "write"):
 
 class ADConnectionError(Exception):
     """Custom exception for errors related to Active Directory connections."""
+
+
+class ADBindError(ADConnectionError):
+    """Raised when an LDAP bind fails with safe diagnostic details."""
+
+    def __init__(
+        self,
+        result_code: int | str | None,
+        controller: str,
+    ) -> None:
+        self.result_code = result_code
+        self.controller = controller
+        super().__init__(
+            "Failed to bind to Active Directory "
+            f"(result_code={result_code!r}, controller={controller})"
+        )
 
 
 class ADMissingServersError(Exception):
@@ -308,10 +354,20 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             sasl_mechanism=GSSAPI,
             receive_timeout=self.receive_timeout,
         )
-        if not connection.bind():
-            raise ADConnectionError(
-                f"Failed to bind to Active Directory: {connection.result['description']}"
+        try:
+            bound = connection.bind()
+        except LDAPException as exc:
+            controller = self._mask_server_identifier(
+                self._bound_server_identifier(connection)
             )
+            raise ADBindError(None, controller) from exc
+        if not bound:
+            result = connection.result if isinstance(connection.result, dict) else {}
+            result_code = result.get("result")
+            controller = self._mask_server_identifier(
+                self._bound_server_identifier(connection)
+            )
+            raise ADBindError(result_code, controller)
         self._selected_server = self._bound_server_identifier(connection)
         return connection
 

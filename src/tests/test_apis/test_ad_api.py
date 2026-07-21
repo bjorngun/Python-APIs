@@ -5,6 +5,7 @@ import ssl
 from ldap3 import BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, SUBTREE
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 from python_apis.apis.ad_api import (
+    ADBindError,
     ADConnection,
     ADConnectionError,
     ADMissingServersError,
@@ -41,11 +42,27 @@ class TestADConnection(unittest.TestCase):
 
     def test_init_bind_failure_raises_exception(self):
         self.mock_connection.bind.return_value = False
-        self.mock_connection.result = {'description': 'Invalid credentials'}
-        with self.assertRaises(ADConnectionError) as context:
+        self.mock_connection.result = {'result': 49, 'description': 'Invalid credentials'}
+        self.mock_connection.server.host = 'server1'
+        with self.assertRaises(ADBindError) as context:
             ADConnection(self.servers, self.search_base)
 
         self.assertIn('Failed to bind to Active Directory', str(context.exception))
+        self.assertEqual(context.exception.result_code, 49)
+        self.assertTrue(context.exception.controller.startswith('controller-'))
+        self.assertNotIn('server1', str(context.exception))
+        self.assertNotIn('Invalid credentials', str(context.exception))
+
+    def test_init_bind_exception_is_chained_to_safe_bind_error(self):
+        original_error = LDAPCommunicationError('raw controller detail')
+        self.mock_connection.bind.side_effect = original_error
+        self.mock_connection.server.host = 'server1'
+
+        with self.assertRaises(ADBindError) as context:
+            ADConnection(self.servers, self.search_base)
+
+        self.assertIs(context.exception.__cause__, original_error)
+        self.assertNotIn('raw controller detail', str(context.exception))
 
     @patch('python_apis.apis.ad_api.ServerPool')
     @patch('python_apis.apis.ad_api.Server')
@@ -534,6 +551,11 @@ class TestAutoReconnect(unittest.TestCase):
         logs = '\n'.join(captured_logs.output)
         self.assertIn('controller-', logs)
         self.assertNotIn('server1', logs)
+        telemetry = ad_conn.last_retry_telemetry
+        self.assertEqual(telemetry.attempt_count, 2)
+        self.assertTrue(telemetry.failed_server.startswith('controller-'))
+        self.assertTrue(telemetry.selected_server.startswith('controller-'))
+        self.assertNotEqual(telemetry.failed_server, telemetry.selected_server)
 
     @patch('python_apis.apis.ad_api.ServerPool')
     @patch('python_apis.apis.ad_api.Server')

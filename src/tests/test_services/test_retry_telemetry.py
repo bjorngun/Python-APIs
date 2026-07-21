@@ -62,7 +62,14 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         self.assertFalse(telemetry.retried)
         self.assertFalse(telemetry.would_retry)
         self.assertFalse(telemetry.recovered)
-        self.assertEqual(telemetry.policy, AD_READ_RETRY_POLICY)
+        self.assertEqual(telemetry.attempt_count, 1)
+        self.assertEqual(telemetry.operation_name, 'search')
+        self.assertIsNone(telemetry.failed_server)
+        self.assertTrue(telemetry.selected_server.startswith('controller-'))
+        self.assertGreaterEqual(telemetry.elapsed_seconds, 0)
+        self.assertIsNone(telemetry.exception_type)
+        self.assertEqual(telemetry.policy['max_retries'], AD_READ_RETRY_POLICY['max_retries'])
+        self.assertEqual(telemetry.policy['backoff_seconds'], 0)
 
     def test_recover_after_retry_records_write_telemetry(self):
         conn = ADConnection(self.servers, self.search_base, write_retry_count=1)
@@ -83,7 +90,9 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         self.assertTrue(telemetry.retried)
         self.assertTrue(telemetry.would_retry)
         self.assertTrue(telemetry.recovered)
-        self.assertEqual(telemetry.policy, _EXPLICIT_WRITE_RETRY_POLICY)
+        self.assertEqual(telemetry.attempt_count, 2)
+        self.assertEqual(telemetry.exception_type, 'LDAPSessionTerminatedByServerError')
+        self.assertEqual(telemetry.policy['max_retries'], 1)
 
     def test_write_retry_is_disabled_by_default(self):
         conn = ADConnection(self.servers, self.search_base)
@@ -97,7 +106,9 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         telemetry = conn.last_retry_telemetry
         self.assertEqual(telemetry.retry_count, 0)
         self.assertFalse(telemetry.would_retry)
-        self.assertEqual(telemetry.policy, AD_WRITE_RETRY_POLICY)
+        self.assertEqual(telemetry.attempt_count, 1)
+        self.assertEqual(telemetry.exception_type, 'LDAPCommunicationError')
+        self.assertEqual(telemetry.policy['max_retries'], AD_WRITE_RETRY_POLICY['max_retries'])
 
     def test_non_recoverable_exception_propagates_without_retry(self):
         conn = ADConnection(self.servers, self.search_base)
@@ -131,6 +142,17 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         self.assertTrue(telemetry.retried)
         self.assertTrue(telemetry.would_retry)
         self.assertFalse(telemetry.recovered)
+        self.assertEqual(telemetry.attempt_count, 2)
+        self.assertEqual(telemetry.exception_type, 'LDAPCommunicationError')
+
+    @patch('python_apis.apis.ad_api.time.monotonic', side_effect=[100, 100.25])
+    def test_elapsed_time_is_recorded(self, _mock_monotonic):
+        conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+
+        conn.search('(objectClass=user)', ['cn'])
+
+        self.assertEqual(conn.last_retry_telemetry.elapsed_seconds, 0.25)
 
     def test_telemetry_policy_is_isolated_from_global(self):
         conn = ADConnection(self.servers, self.search_base)

@@ -8,7 +8,7 @@ Covers ``ADGroupService.get_user_transitive_groups`` and
 import sys
 from pathlib import Path
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 SRC_ROOT = Path(__file__).resolve().parents[2]
 if str(SRC_ROOT) not in sys.path:
@@ -258,10 +258,16 @@ class TestRangedAttributeRetrieval(unittest.TestCase):
     """Validate ADConnection LDAP ranged attribute assembly."""
 
     def setUp(self):
-        # Build an ADConnection without establishing a real LDAP session.
-        self.connection = ADConnection.__new__(ADConnection)
-        self.connection.connection = MagicMock()
-        self.connection._last_retry_telemetry = None  # pylint: disable=protected-access
+        mock_ldap_connection = MagicMock()
+        mock_ldap_connection.bind.return_value = True
+        with patch(
+            'python_apis.apis.ad_api.Connection',
+            return_value=mock_ldap_connection,
+        ):
+            self.connection = ADConnection(
+                ['ldap://server1'],
+                'dc=example,dc=com',
+            )
 
     def _stub_ranges(self, range_responses):
         """Make connection.search yield the given range responses in order."""

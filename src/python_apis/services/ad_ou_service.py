@@ -7,7 +7,7 @@ organizational units.
 
 from logging import getLogger
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Optional
 
 from ldap3 import SUBTREE
@@ -232,6 +232,87 @@ class ADOrganizationalUnitService:
         """Resolve caller-defined values from an OU toward the directory root."""
 
         return resolve_ou_inherited_attributes(ou_dn, rules, ou_tree)
+
+    @staticmethod
+    def _object_ou_dn(
+        item: object,
+        index: int,
+        distinguished_name_attribute: str,
+        get_ou_dn: Callable[[object], str | None] | None,
+    ) -> str:
+        """Extract and validate one object's OU distinguished name."""
+
+        if get_ou_dn is not None:
+            ou_dn = get_ou_dn(item)
+        elif isinstance(item, Mapping):
+            ou_dn = item.get(distinguished_name_attribute)
+        else:
+            ou_dn = getattr(item, distinguished_name_attribute, None)
+        if not isinstance(ou_dn, str) or not ou_dn.strip():
+            raise ValueError(f"Object at index {index} has no OU distinguished name")
+        return ou_dn
+
+    def resolve_inherited_attributes_for_objects(  # pylint: disable=too-many-arguments,too-many-locals
+        self,
+        objects: Iterable[object],
+        rules: Mapping[str, OUAttributeRule],
+        *,
+        distinguished_name_attribute: str = 'distinguishedName',
+        get_ou_dn: Callable[[object], str | None] | None = None,
+        ou_tree: Mapping[str, ADOrganizationalUnit] | None = None,
+        search_base: str | None = None,
+    ) -> list[dict[str, object | None]]:
+        """Resolve ordered values for arbitrary objects with at most one OU query."""
+
+        if get_ou_dn is not None and not callable(get_ou_dn):
+            raise ValueError("get_ou_dn must be callable or None")
+        if get_ou_dn is None and (
+            not isinstance(distinguished_name_attribute, str)
+            or not distinguished_name_attribute.strip()
+        ):
+            raise ValueError("distinguished_name_attribute must be a non-empty string")
+        for target, rule in rules.items():
+            if not isinstance(target, str) or not target.strip():
+                raise ValueError("OU rule targets must be non-empty strings")
+            if not isinstance(rule, OUAttributeRule):
+                raise TypeError("OU rule values must be OUAttributeRule instances")
+
+        materialized_objects = list(objects)
+        if not materialized_objects:
+            return []
+
+        resolved_tree = ou_tree
+        if resolved_tree is None:
+            required_attributes: list[str] = []
+            seen_attributes: set[str] = set()
+            for rule in rules.values():
+                for attribute in (rule.source, *rule.aliases):
+                    key = attribute.casefold()
+                    if key not in seen_attributes:
+                        required_attributes.append(attribute)
+                        seen_attributes.add(key)
+            resolved_tree = self.get_ou_tree(
+                attributes=required_attributes,
+                search_base=search_base,
+            )
+
+        resolution_cache: dict[str, dict[str, object | None]] = {}
+        resolved_values: list[dict[str, object | None]] = []
+        for index, item in enumerate(materialized_objects):
+            ou_dn = self._object_ou_dn(
+                item,
+                index,
+                distinguished_name_attribute,
+                get_ou_dn,
+            )
+            if ou_dn not in resolution_cache:
+                resolution_cache[ou_dn] = self.resolve_inherited_attributes(
+                    ou_dn,
+                    rules,
+                    ou_tree=resolved_tree,
+                )
+            resolved_values.append(dict(resolution_cache[ou_dn]))
+        return resolved_values
 
     def get_deepest_ou_field(
         self,

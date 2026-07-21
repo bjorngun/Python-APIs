@@ -17,7 +17,7 @@ import ssl
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from ldap3.utils.log import (
@@ -304,6 +304,7 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
         self._username = username
         self._password = password
         self._tls_config = tls
+        self._closed = False
         if tls is not None and tls.legacy_leaf_key_compatibility:
             logger.warning(
                 "Legacy leaf-key compatibility is enabled; certificate and hostname "
@@ -359,6 +360,17 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
             f"ADConnection(authentication={self._authentication!r}, "
             f"tls={tls_mode!r}, servers={len(self._servers)})"
         )
+
+    def __enter__(self) -> "ADConnection":
+        """Return this open connection for context-managed use."""
+
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback) -> Literal[False]:
+        """Close the connection without suppressing an active exception."""
+
+        self.close()
+        return False
 
     @staticmethod
     def _validate_connection_options(  # pylint: disable=too-many-arguments
@@ -629,11 +641,12 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
     ) -> None:
         """Close a failed connection, back off, and prefer another controller."""
 
-        self._close_connection()
+        self.close()
         if backoff_seconds > 0:
             time.sleep(backoff_seconds)
         ordered_servers = self._prioritize_alternate_servers(failed_server)
         self.connection = self._get_connection(ordered_servers)
+        self._closed = False
 
     def rebind(self) -> None:
         """Re-establish the LDAP connection using the original server list.
@@ -642,14 +655,23 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
         reconnect behaviour built into every public operation method.
         """
         logger.info("Re-binding to Active Directory.")
-        self._close_connection()
+        self.close()
         self.connection = self._get_connection(self._servers)
+        self._closed = False
+
+    def close(self) -> None:
+        """Idempotently unbind the current LDAP connection best-effort."""
+
+        if self._closed:
+            return
+        self._close_connection()
+        self._closed = True
 
     def _close_connection(self) -> None:
         """Attempt to cleanly close the current LDAP connection."""
         try:
             self.connection.unbind()
-        except (LDAPSessionTerminatedByServerError, LDAPCommunicationError, OSError):
+        except (LDAPException, OSError):
             logger.debug("Could not cleanly unbind the previous connection.")
 
     def _get_paged_search(  # pylint: disable=too-many-arguments

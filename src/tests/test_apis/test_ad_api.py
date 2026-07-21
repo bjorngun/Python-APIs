@@ -798,6 +798,64 @@ class TestAutoReconnect(unittest.TestCase):
 
         self.assertIsNotNone(ad_conn.connection)
 
+    def test_close_is_idempotent(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        ad_conn.close()
+        ad_conn.close()
+
+        self.mock_connection.unbind.assert_called_once_with()
+
+    def test_context_manager_returns_and_closes_connection(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        with ad_conn as entered_connection:
+            self.assertIs(entered_connection, ad_conn)
+            self.mock_connection.unbind.assert_not_called()
+
+        self.mock_connection.unbind.assert_called_once_with()
+
+    def test_context_manager_closes_and_propagates_original_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        with self.assertRaisesRegex(RuntimeError, "ORIGINAL_ERROR_CANARY"):
+            with ad_conn:
+                raise RuntimeError("ORIGINAL_ERROR_CANARY")
+
+        self.mock_connection.unbind.assert_called_once_with()
+
+    def test_context_cleanup_failure_does_not_mask_original_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.unbind.side_effect = LDAPCommunicationError(
+            "CLEANUP_ERROR_CANARY"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "ORIGINAL_ERROR_CANARY"):
+            with ad_conn:
+                raise RuntimeError("ORIGINAL_ERROR_CANARY")
+
+    def test_rebind_reopens_lifecycle_and_preserves_options(self):
+        tls_config = ADTLSConfig.secure()
+        ad_conn = ADConnection(
+            self.servers,
+            self.search_base,
+            authentication="simple",
+            username="SIMPLE_USER_CANARY",
+            password="SIMPLE_PASSWORD_CANARY",
+            tls=tls_config,
+            receive_timeout=30,
+            read_retry_count=2,
+        )
+
+        ad_conn.rebind()
+        ad_conn.close()
+
+        self.assertEqual(self.mock_connection.unbind.call_count, 2)
+        self.assertIs(ad_conn.tls_config, tls_config)
+        self.assertEqual(ad_conn.authentication_mode, "simple")
+        self.assertEqual(ad_conn.receive_timeout, 30)
+        self.assertEqual(ad_conn.read_retry_count, 2)
+
     # -- decorator: retry on session error ------------------------------
 
     def test_search_retries_on_session_terminated(self):

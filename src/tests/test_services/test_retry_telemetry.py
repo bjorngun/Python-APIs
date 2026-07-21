@@ -72,7 +72,7 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         ]
         self.mock_connection.result = {'description': 'success'}
 
-        with patch.object(conn, 'rebind') as mock_rebind:
+        with patch.object(conn, '_rebind_after_failure') as mock_rebind:
             response = conn.modify('CN=x,dc=example,dc=com', [('title', 'Dev')])
 
         mock_rebind.assert_called_once()
@@ -89,7 +89,7 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         conn = ADConnection(self.servers, self.search_base)
         self.mock_connection.modify.side_effect = LDAPCommunicationError('response lost')
 
-        with patch.object(conn, 'rebind') as mock_rebind:
+        with patch.object(conn, '_rebind_after_failure') as mock_rebind:
             with self.assertRaises(LDAPCommunicationError):
                 conn.modify('CN=x,dc=example,dc=com', [('title', 'Dev')])
 
@@ -103,7 +103,7 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         conn = ADConnection(self.servers, self.search_base)
         self.mock_connection.modify.side_effect = ValueError('bad input')
 
-        with patch.object(conn, 'rebind') as mock_rebind:
+        with patch.object(conn, '_rebind_after_failure') as mock_rebind:
             with self.assertRaises(ValueError):
                 conn.modify('CN=x,dc=example,dc=com', [('title', 'Dev')])
 
@@ -121,7 +121,7 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
             LDAPCommunicationError('second'),
         ]
 
-        with patch.object(conn, 'rebind') as mock_rebind:
+        with patch.object(conn, '_rebind_after_failure') as mock_rebind:
             with self.assertRaises(LDAPCommunicationError):
                 conn.modify('CN=x,dc=example,dc=com', [('title', 'Dev')])
 

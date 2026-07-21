@@ -8,10 +8,13 @@ AD to run it effectively.
 """
 
 import functools
+import hashlib
 import logging
 import ssl
+import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from ldap3.utils.log import set_library_log_detail_level, BASIC
 from ldap3 import (ALL_ATTRIBUTES, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE,
@@ -109,11 +112,26 @@ def _auto_reconnect(operation_kind: str = "write"):
                         would_retry = True
                         retried = True
                         retry_count += 1
+                        failed_server = self._selected_server  # pylint: disable=protected-access
                         logger.warning(
-                            "LDAP session error in %s, attempting rebind (%d/%d): %s",
-                            method.__name__, retry_count, retry_limit, exc,
+                            "Recoverable LDAP %s in %s; retrying (%d/%d), controller=%s",
+                            type(exc).__name__,
+                            method.__name__,
+                            retry_count,
+                            retry_limit,
+                            self._mask_server_identifier(  # pylint: disable=protected-access
+                                failed_server
+                            ),
                         )
-                        self.rebind()
+                        backoff_seconds = (
+                            self.read_retry_backoff_seconds
+                            if operation_kind == "read"
+                            else 0
+                        )
+                        self._rebind_after_failure(  # pylint: disable=protected-access
+                            failed_server=failed_server,
+                            backoff_seconds=backoff_seconds,
+                        )
             finally:
                 self._last_retry_telemetry = RetryTelemetry(  # pylint: disable=protected-access
                     operation_kind=operation_kind,
@@ -183,6 +201,7 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             write_retry_count=write_retry_count,
         )
         self._last_retry_telemetry: RetryTelemetry | None = None
+        self._selected_server: str | None = None
         self.connection = self._get_connection(servers)
 
     @property
@@ -269,7 +288,7 @@ class ADConnection:  # pylint: disable=too-many-public-methods
 
         return self._last_retry_telemetry
 
-    def _get_connection(self, servers: list) -> Connection:
+    def _get_connection(self, servers: list[str]) -> Connection:
         """initializes a connection to the active directory.
         """
         if not servers:
@@ -293,7 +312,66 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             raise ADConnectionError(
                 f"Failed to bind to Active Directory: {connection.result['description']}"
             )
+        self._selected_server = self._bound_server_identifier(connection)
         return connection
+
+    @staticmethod
+    def _bound_server_identifier(connection: Connection) -> str | None:
+        """Return the bound server host for internal failover decisions."""
+
+        server = getattr(connection, "server", None)
+        host = getattr(server, "host", None)
+        return host if isinstance(host, str) else None
+
+    @staticmethod
+    def _normalize_server_identifier(server: str) -> str:
+        """Normalize configured URLs and bound hosts for internal comparison."""
+
+        candidate = server.strip()
+        parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+        return (parsed.hostname or candidate).casefold()
+
+    @classmethod
+    def _mask_server_identifier(cls, server: str | None) -> str:
+        """Return a stable non-reversible controller token for logs and telemetry."""
+
+        if not server:
+            return "controller-unknown"
+        normalized = cls._normalize_server_identifier(server)
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
+        return f"controller-{digest}"
+
+    def _prioritize_alternate_servers(self, failed_server: str | None) -> list[str]:
+        """Order configured controllers with the failed controller last."""
+
+        if not failed_server or len(self._servers) < 2:
+            return list(self._servers)
+        normalized_failed = self._normalize_server_identifier(failed_server)
+        alternates = [
+            server
+            for server in self._servers
+            if self._normalize_server_identifier(server) != normalized_failed
+        ]
+        failed = [
+            server
+            for server in self._servers
+            if self._normalize_server_identifier(server) == normalized_failed
+        ]
+        return alternates + failed if alternates else list(self._servers)
+
+    def _rebind_after_failure(
+        self,
+        *,
+        failed_server: str | None,
+        backoff_seconds: float,
+    ) -> None:
+        """Close a failed connection, back off, and prefer another controller."""
+
+        self._close_connection()
+        if backoff_seconds > 0:
+            time.sleep(backoff_seconds)
+        ordered_servers = self._prioritize_alternate_servers(failed_server)
+        self.connection = self._get_connection(ordered_servers)
 
     def rebind(self) -> None:
         """Re-establish the LDAP connection using the original server list.

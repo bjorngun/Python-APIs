@@ -422,7 +422,7 @@ class TestAutoReconnect(unittest.TestCase):
             iter(complete_result),
         ]
 
-        with patch.object(ad_conn, 'rebind') as mock_rebind:
+        with patch.object(ad_conn, '_rebind_after_failure') as mock_rebind:
             results = ad_conn.search('(objectClass=user)', ['cn'])
 
         mock_rebind.assert_called_once()
@@ -447,7 +447,7 @@ class TestAutoReconnect(unittest.TestCase):
         ad_conn = ADConnection(self.servers, self.search_base)
         self.mock_connection.modify.side_effect = LDAPCommunicationError('write response lost')
 
-        with patch.object(ad_conn, 'rebind') as mock_rebind:
+        with patch.object(ad_conn, '_rebind_after_failure') as mock_rebind:
             with self.assertRaises(LDAPCommunicationError):
                 ad_conn.modify(
                     'CN=John,OU=users,DC=example,DC=com',
@@ -464,7 +464,7 @@ class TestAutoReconnect(unittest.TestCase):
             'read failed'
         )
 
-        with patch.object(ad_conn, 'rebind') as mock_rebind:
+        with patch.object(ad_conn, '_rebind_after_failure') as mock_rebind:
             with self.assertRaises(LDAPCommunicationError):
                 ad_conn.search('(objectClass=user)', ['cn'])
 
@@ -480,13 +480,84 @@ class TestAutoReconnect(unittest.TestCase):
             iter(complete_result),
         ]
 
-        with patch.object(ad_conn, 'rebind') as mock_rebind:
+        with patch.object(ad_conn, '_rebind_after_failure') as mock_rebind:
             results = ad_conn.search('(objectClass=user)', ['cn'])
 
         self.assertEqual(results, [{'cn': 'Complete Result'}])
         self.assertEqual(mock_rebind.call_count, 2)
         self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 2)
         self.assertEqual(ad_conn.last_retry_telemetry.policy['max_attempts'], 3)
+
+    @patch('python_apis.apis.ad_api.time.sleep')
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    def test_retry_closes_backs_off_and_prioritizes_another_controller(
+        self,
+        mock_server_cls,
+        _mock_server_pool_cls,
+        mock_sleep,
+    ):
+        failed_connection = MagicMock()
+        failed_connection.bind.return_value = True
+        failed_connection.server.host = 'server1'
+        failed_connection.extend.standard.paged_search.side_effect = LDAPCommunicationError(
+            'server1 response lost'
+        )
+        recovered_connection = MagicMock()
+        recovered_connection.bind.return_value = True
+        recovered_connection.server.host = 'server2'
+        recovered_connection.extend.standard.paged_search.return_value = iter([
+            {'attributes': {'cn': 'Recovered'}},
+        ])
+        self.mock_connection_cls.side_effect = [failed_connection, recovered_connection]
+
+        with self.assertLogs('python_apis.apis.ad_api', level='WARNING') as captured_logs:
+            ad_conn = ADConnection(
+                self.servers,
+                self.search_base,
+                read_retry_backoff_seconds=0.5,
+            )
+            results = ad_conn.search('(objectClass=user)', ['cn'])
+
+        self.assertEqual(results, [{'cn': 'Recovered'}])
+        failed_connection.unbind.assert_called_once()
+        mock_sleep.assert_called_once_with(0.5)
+        self.assertEqual(
+            [server_call.args[0] for server_call in mock_server_cls.call_args_list],
+            [
+                'ldap://server1',
+                'ldap://server2',
+                'ldap://server2',
+                'ldap://server1',
+            ],
+        )
+        logs = '\n'.join(captured_logs.output)
+        self.assertIn('controller-', logs)
+        self.assertNotIn('server1', logs)
+
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    def test_single_controller_retry_keeps_available_controller(
+        self, mock_server_cls, _mock_server_pool_cls
+    ):
+        only_server = ['ldap://server1']
+        failed_connection = MagicMock()
+        failed_connection.bind.return_value = True
+        failed_connection.server.host = 'server1'
+        failed_connection.extend.standard.paged_search.side_effect = LDAPCommunicationError()
+        recovered_connection = MagicMock()
+        recovered_connection.bind.return_value = True
+        recovered_connection.server.host = 'server1'
+        recovered_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection_cls.side_effect = [failed_connection, recovered_connection]
+
+        ad_conn = ADConnection(only_server, self.search_base)
+        ad_conn.search('(objectClass=user)', ['cn'])
+
+        self.assertEqual(
+            [server_call.args[0] for server_call in mock_server_cls.call_args_list],
+            ['ldap://server1', 'ldap://server1'],
+        )
 
     # -- decorator: non-recoverable errors propagate --------------------
 

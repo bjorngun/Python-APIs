@@ -10,6 +10,42 @@ AD_CONNECTION_ERROR = "AD_CONNECTION_ERROR"
 AD_TIMEOUT = "AD_TIMEOUT"
 AD_UNKNOWN = "AD_UNKNOWN"
 
+_LDAP_RESULT_ERROR_CODES = {
+    1: AD_UNKNOWN,
+    2: AD_VALIDATION_ERROR,
+    3: AD_TIMEOUT,
+    4: AD_VALIDATION_ERROR,
+    7: AD_AUTH_ERROR,
+    8: AD_AUTH_ERROR,
+    11: AD_PERMISSION_DENIED,
+    13: AD_PERMISSION_DENIED,
+    16: AD_NOT_FOUND,
+    17: AD_VALIDATION_ERROR,
+    18: AD_VALIDATION_ERROR,
+    19: AD_VALIDATION_ERROR,
+    20: "AD_CONFLICT",
+    21: AD_VALIDATION_ERROR,
+    32: AD_NOT_FOUND,
+    34: AD_VALIDATION_ERROR,
+    48: AD_AUTH_ERROR,
+    49: AD_AUTH_ERROR,
+    50: AD_PERMISSION_DENIED,
+    51: AD_CONNECTION_ERROR,
+    52: AD_CONNECTION_ERROR,
+    53: AD_PERMISSION_DENIED,
+    64: AD_VALIDATION_ERROR,
+    65: AD_VALIDATION_ERROR,
+    68: "AD_CONFLICT",
+}
+
+
+def classify_ldap_result_code(result_code: int) -> str | None:
+    """Return the canonical safe code for an LDAP result code."""
+
+    if result_code == 0:
+        return None
+    return _LDAP_RESULT_ERROR_CODES.get(result_code, AD_UNKNOWN)
+
 
 class ADConnectionError(Exception):
     """Base exception exposing a stable code without sensitive LDAP details."""
@@ -140,4 +176,5 @@ __all__ = [
     "ADTimeoutError",
     "ADTLSConfigurationError",
     "ADTransportError",
+    "classify_ldap_result_code",
 ]

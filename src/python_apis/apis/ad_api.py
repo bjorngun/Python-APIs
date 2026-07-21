@@ -15,6 +15,7 @@ import logging
 import math
 import ssl
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -31,6 +32,8 @@ from ldap3.core.exceptions import (
     LDAPCommunicationError,
     LDAPException,
     LDAPInvalidDnError,
+    LDAPInvalidFilterError,
+    LDAPResponseTimeoutError,
     LDAPSessionTerminatedByServerError,
 )
 from ldap3.utils.dn import parse_dn
@@ -39,8 +42,14 @@ from python_apis.apis.ad_config import ADAuthenticationMode, ADTLSConfig
 from python_apis.apis.ad_errors import (  # pylint: disable=unused-import
     ADBindError,
     ADConnectionError as ADConnectionError,
+    ADMalformedQueryError,
+    ADMalformedResultError,
     ADMissingServersError,
+    ADQueryRejectedError,
+    ADTimeoutError,
     ADTLSConfigurationError,
+    ADTransportError,
+    classify_ldap_result_code,
 )
 from python_apis.models.ad_get import ADGetResult
 
@@ -196,6 +205,29 @@ def _auto_reconnect(operation_kind: str = "write"):
         return wrapper
 
     return decorator
+
+
+def _normalize_strict_read_errors(method):
+    """Wrap exhausted strict-read failures in safe public exceptions."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except LDAPResponseTimeoutError as exc:
+            controller = self._mask_server_identifier(  # pylint: disable=protected-access
+                self._selected_server  # pylint: disable=protected-access
+            )
+            raise ADTimeoutError(controller) from exc
+        except _RECOVERABLE_EXCEPTIONS as exc:
+            controller = self._mask_server_identifier(  # pylint: disable=protected-access
+                self._selected_server  # pylint: disable=protected-access
+            )
+            raise ADTransportError(controller) from exc
+        except (LDAPInvalidFilterError, LDAPInvalidDnError, ValueError) as exc:
+            raise ADMalformedQueryError() from exc
+
+    return wrapper
 
 
 class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
@@ -632,6 +664,48 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
         )
         return entry_generator
 
+    def _materialize_paged_search(  # pylint: disable=too-many-arguments
+        self,
+        search_filter: str,
+        attributes: list[str] | str,
+        *,
+        search_base: str,
+        search_scope: str,
+        page_size: int,
+    ) -> list[dict[str, str]]:
+        """Consume one complete paged search attempt into plain dictionaries."""
+
+        entry_generator = self._get_paged_search(
+            search_filter,
+            attributes,
+            search_base=search_base,
+            search_scope=search_scope,
+            page_size=page_size,
+        )
+        result_list = [entry['attributes'] for entry in entry_generator if 'attributes' in entry]
+        for ad_object in result_list:
+            self._set_ou_for_object(ad_object)
+        return result_list
+
+    def _validate_strict_search_result(self) -> None:
+        """Raise safely unless the most recent LDAP result is explicit success."""
+
+        result = getattr(self.connection, "result", None)
+        if not isinstance(result, Mapping):
+            raise ADMalformedResultError()
+        result_code = result.get("result")
+        if isinstance(result_code, bool) or not isinstance(result_code, int):
+            raise ADMalformedResultError()
+        error_code = classify_ldap_result_code(result_code)
+        if error_code is None:
+            return
+        controller = self._mask_server_identifier(self._selected_server)
+        raise ADQueryRejectedError(
+            error_code=error_code,
+            result_code=result_code,
+            controller=controller,
+        )
+
     @staticmethod
     def _validate_search_options(
         search_base: str | None,
@@ -712,16 +786,47 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
         self._validate_search_options(search_base, search_scope, page_size)
         effective_search_base = self.search_base if search_base is None else search_base
         effective_page_size = self.page_size if page_size is None else page_size
-        entry_generator = self._get_paged_search(
+        return self._materialize_paged_search(
             search_filter,
             attributes,
             search_base=effective_search_base,
             search_scope=search_scope,
             page_size=effective_page_size,
         )
-        result_list = [x['attributes'] for x in entry_generator if 'attributes' in x]
-        for ad_object in result_list:
-            self._set_ou_for_object(ad_object)
+
+    @_normalize_strict_read_errors
+    @_auto_reconnect("read")
+    def search_strict(  # pylint: disable=too-many-arguments
+        self,
+        search_filter: str,
+        attributes: list[str] | None = None,
+        *,
+        search_base: str | None = None,
+        search_scope: str = SUBTREE,
+        page_size: int | None = None,
+    ) -> list[dict[str, str]]:
+        """Return a complete paged search or raise a safe typed read error.
+
+        Unlike :meth:`search`, this method validates the final LDAP result so
+        rejected or malformed operations cannot be represented as an empty
+        successful result. Partial entries are discarded before any exception
+        leaves this method.
+        """
+
+        if attributes is None:
+            attributes = ALL_ATTRIBUTES
+
+        self._validate_search_options(search_base, search_scope, page_size)
+        effective_search_base = self.search_base if search_base is None else search_base
+        effective_page_size = self.page_size if page_size is None else page_size
+        result_list = self._materialize_paged_search(
+            search_filter,
+            attributes,
+            search_base=effective_search_base,
+            search_scope=search_scope,
+            page_size=effective_page_size,
+        )
+        self._validate_strict_search_result()
         return result_list
 
     def get_v2(

@@ -13,7 +13,12 @@ from ldap3 import (
     SIMPLE,
     SUBTREE,
 )
-from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
+from ldap3.core.exceptions import (
+    LDAPCommunicationError,
+    LDAPInvalidFilterError,
+    LDAPResponseTimeoutError,
+    LDAPSessionTerminatedByServerError,
+)
 from python_apis.apis.ad_api import (
     ADBindError,
     ADConnection,
@@ -21,6 +26,14 @@ from python_apis.apis.ad_api import (
     ADMissingServersError,
 )
 from python_apis.apis.ad_config import ADTLSConfig
+from python_apis.apis.ad_errors import (
+    ADMalformedQueryError,
+    ADMalformedResultError,
+    ADQueryRejectedError,
+    ADTimeoutError,
+    ADTransportError,
+)
+from python_apis.services.error_taxonomy import AD_PERMISSION_DENIED
 
 
 class TestADConnection(unittest.TestCase):
@@ -417,6 +430,112 @@ class TestADConnection(unittest.TestCase):
         results = ad_conn.search('(objectClass=user)', ['sAMAccountName'])
 
         self.assertEqual(results, [])
+
+    def test_strict_search_distinguishes_successful_empty_result(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection.result = {'result': 0, 'description': 'success'}
+
+        results = ad_conn.search_strict('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertEqual(results, [])
+
+    def test_strict_search_raises_for_rejected_empty_result(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection.result = {
+            'result': 50,
+            'description': 'LDAP_DIAGNOSTIC_CANARY',
+        }
+
+        with self.assertRaises(ADQueryRejectedError) as captured_error:
+            ad_conn.search_strict('(cn=FILTER_CANARY)', ['sAMAccountName'])
+
+        error = captured_error.exception
+        self.assertEqual(error.error_code, AD_PERMISSION_DENIED)
+        self.assertEqual(error.result_code, 50)
+        self.assertNotIn('FILTER_CANARY', str(error))
+        self.assertNotIn('LDAP_DIAGNOSTIC_CANARY', str(error))
+
+    def test_strict_search_discards_partial_rejected_page(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        def rejected_page():
+            yield {'attributes': {'sAMAccountName': 'PARTIAL_MEMBER_CANARY'}}
+            self.mock_connection.result = {'result': 50}
+
+        self.mock_connection.extend.standard.paged_search.return_value = rejected_page()
+
+        with self.assertRaises(ADQueryRejectedError) as captured_error:
+            ad_conn.search_strict('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertNotIn('PARTIAL_MEMBER_CANARY', str(captured_error.exception))
+
+    def test_strict_search_rejects_malformed_result(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection.result = {'description': 'MALFORMED_RESULT_CANARY'}
+
+        with self.assertRaises(ADMalformedResultError) as captured_error:
+            ad_conn.search_strict('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertNotIn('MALFORMED_RESULT_CANARY', str(captured_error.exception))
+
+    def test_strict_search_wraps_malformed_filter_safely(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = LDAPInvalidFilterError(
+            'FILTER_CANARY'
+        )
+
+        with self.assertRaises(ADMalformedQueryError) as captured_error:
+            ad_conn.search_strict('(cn=FILTER_CANARY', ['sAMAccountName'])
+
+        self.assertNotIn('FILTER_CANARY', str(captured_error.exception))
+
+    def test_strict_search_retries_recoverable_failure_once(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = [
+            LDAPCommunicationError('TRANSPORT_CANARY'),
+            iter([{'attributes': {'sAMAccountName': 'user1'}}]),
+        ]
+        self.mock_connection.result = {'result': 0}
+
+        with patch.object(ad_conn, '_rebind_after_failure') as mock_rebind:
+            results = ad_conn.search_strict('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertEqual(results, [{'sAMAccountName': 'user1'}])
+        mock_rebind.assert_called_once()
+        self.assertEqual(ad_conn.last_retry_telemetry.operation_name, 'search_strict')
+        self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 1)
+
+    def test_strict_search_wraps_exhausted_transport_safely(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = LDAPCommunicationError(
+            'TRANSPORT_CANARY'
+        )
+
+        with patch.object(ad_conn, '_rebind_after_failure'), self.assertRaises(
+            ADTransportError
+        ) as captured_error:
+            ad_conn.search_strict('(cn=FILTER_CANARY)', ['sAMAccountName'])
+
+        self.assertNotIn('TRANSPORT_CANARY', str(captured_error.exception))
+        self.assertNotIn('FILTER_CANARY', str(captured_error.exception))
+        self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 1)
+
+    def test_strict_search_wraps_timeout_without_retry(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = LDAPResponseTimeoutError(
+            'TIMEOUT_CANARY'
+        )
+
+        with patch.object(ad_conn, '_rebind_after_failure') as mock_rebind, self.assertRaises(
+            ADTimeoutError
+        ) as captured_error:
+            ad_conn.search_strict('(cn=FILTER_CANARY)', ['sAMAccountName'])
+
+        mock_rebind.assert_not_called()
+        self.assertNotIn('TIMEOUT_CANARY', str(captured_error.exception))
 
     def test_search_extracts_ou_after_complete_escaped_rdn(self):
         ad_conn = ADConnection(self.servers, self.search_base)

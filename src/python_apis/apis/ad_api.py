@@ -8,53 +8,65 @@ AD to run it effectively.
 """
 
 import functools
+import hashlib
 import logging
+import math
 import ssl
+import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from ldap3.utils.log import set_library_log_detail_level, BASIC
-from ldap3 import (ALL_ATTRIBUTES, BASE, MODIFY_ADD, MODIFY_DELETE,
+from ldap3 import (ALL_ATTRIBUTES, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, GSSAPI,
                    Connection, Server, ServerPool, Tls)
-from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
+from ldap3.core.exceptions import (
+    LDAPCommunicationError,
+    LDAPException,
+    LDAPInvalidDnError,
+    LDAPSessionTerminatedByServerError,
+)
+from ldap3.utils.dn import parse_dn
 
 from python_apis.models.ad_get import ADGetResult
 
 logger = logging.getLogger(__name__)
 
-_RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
+AD_RECOVERABLE_READ_EXCEPTIONS = (
+    LDAPSessionTerminatedByServerError,
+    LDAPCommunicationError,
+)
+_RECOVERABLE_EXCEPTIONS = AD_RECOVERABLE_READ_EXCEPTIONS
 _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
+_SUPPORTED_SEARCH_SCOPES = frozenset((BASE, LEVEL, SUBTREE))
 
 
-def _build_retry_policy(operation_kind: str) -> dict[str, Any]:
-    """Describe the current retry policy for a given operation classification.
+def _build_retry_policy(operation_kind: str, max_retries: int) -> dict[str, Any]:
+    """Describe the configured retry policy for an operation classification."""
 
-    The policy is descriptive (not a control knob in Stage N): every decorated
-    AD operation retries at most once after a rebind when a recoverable
-    transport/session error is raised, so reads and writes currently share the
-    same ``rebind_once`` behavior.
-    """
+    if max_retries == 0:
+        strategy = "no_retry"
+    elif max_retries == 1:
+        strategy = "rebind_once"
+    else:
+        strategy = "bounded_rebind"
 
     return {
         "operation_kind": operation_kind,
-        "max_attempts": 2,
-        "max_retries": 1,
-        "strategy": "rebind_once",
+        "max_attempts": max_retries + 1,
+        "max_retries": max_retries,
+        "strategy": strategy,
         "retry_on": _RECOVERABLE_EXCEPTION_NAMES,
     }
 
 
-AD_READ_RETRY_POLICY = _build_retry_policy("read")
-AD_WRITE_RETRY_POLICY = _build_retry_policy("write")
-_RETRY_POLICY_BY_KIND = {
-    "read": AD_READ_RETRY_POLICY,
-    "write": AD_WRITE_RETRY_POLICY,
-}
+AD_READ_RETRY_POLICY = _build_retry_policy("read", 1)
+AD_WRITE_RETRY_POLICY = _build_retry_policy("write", 0)
 
 
 @dataclass(frozen=True)
-class RetryTelemetry:
+class RetryTelemetry:  # pylint: disable=too-many-instance-attributes
     """Immutable record of the retry outcome for a single AD operation.
 
     Captured by :func:`_auto_reconnect` on every decorated call and exposed via
@@ -69,43 +81,86 @@ class RetryTelemetry:
     would_retry: bool = False
     recovered: bool = False
     policy: dict[str, Any] = field(default_factory=dict)
+    attempt_count: int = 1
+    operation_name: str | None = None
+    failed_server: str | None = None
+    selected_server: str | None = None
+    elapsed_seconds: float = 0
+    exception_type: str | None = None
+
+
+@dataclass(frozen=True)
+class _ADConnectionOptions:
+    """Validated immutable settings reused by every LDAP bind."""
+
+    receive_timeout: float
+    connect_timeout: float | None
+    page_size: int
+    read_retry_count: int
+    read_retry_backoff_seconds: float
+    write_retry_count: int
 
 
 def _auto_reconnect(operation_kind: str = "write"):
-    """Build a decorator that retries once after a rebind on recoverable errors.
-
-    ``operation_kind`` (``"read"`` or ``"write"``) selects the descriptive retry
-    policy attached to the recorded :class:`RetryTelemetry`. The control flow is
-    unchanged from the historic behavior: the wrapped method is retried at most
-    once after :meth:`ADConnection.rebind` when a recoverable LDAP
-    session/communication error is raised. Telemetry is recorded for every call
-    (including the no-retry success path) on the connection instance.
-    """
-
-    policy = _RETRY_POLICY_BY_KIND.get(operation_kind, AD_WRITE_RETRY_POLICY)
+    """Build a decorator for bounded retries after recoverable LDAP failures."""
 
     def decorator(method):
         @functools.wraps(method)
-        def wrapper(self, *args, **kwargs):
+        def wrapper(self, *args, **kwargs):  # pylint: disable=too-many-locals
+            started_at = time.monotonic()
+            attempt_count = 0
             retry_count = 0
             retried = False
             would_retry = False
             recovered = False
+            failed_server_token = None
+            exception_type = None
+            retry_limit = (
+                self.read_retry_count
+                if operation_kind == "read"
+                else self.write_retry_count
+            )
+            policy = _build_retry_policy(operation_kind, retry_limit)
+            policy["backoff_seconds"] = (
+                self.read_retry_backoff_seconds if operation_kind == "read" else 0
+            )
             try:
-                try:
-                    return method(self, *args, **kwargs)
-                except _RECOVERABLE_EXCEPTIONS as exc:
-                    logger.warning(
-                        "LDAP session error in %s, attempting rebind: %s",
-                        method.__name__, exc,
-                    )
-                    would_retry = True
-                    retried = True
-                    retry_count = 1
-                    self.rebind()
-                    result = method(self, *args, **kwargs)
-                    recovered = True
-                    return result
+                while True:
+                    attempt_count += 1
+                    try:
+                        result = method(self, *args, **kwargs)
+                        recovered = retry_count > 0
+                        return result
+                    except _RECOVERABLE_EXCEPTIONS as exc:
+                        exception_type = type(exc).__name__
+                        failed_server_token = self._mask_server_identifier(  # pylint: disable=protected-access
+                            self._selected_server  # pylint: disable=protected-access
+                        )
+                        if retry_count >= retry_limit:
+                            raise
+                        would_retry = True
+                        retried = True
+                        retry_count += 1
+                        failed_server = self._selected_server  # pylint: disable=protected-access
+                        logger.warning(
+                            "Recoverable LDAP %s in %s; retrying (%d/%d), controller=%s",
+                            type(exc).__name__,
+                            method.__name__,
+                            retry_count,
+                            retry_limit,
+                            self._mask_server_identifier(  # pylint: disable=protected-access
+                                failed_server
+                            ),
+                        )
+                        backoff_seconds = (
+                            self.read_retry_backoff_seconds
+                            if operation_kind == "read"
+                            else 0
+                        )
+                        self._rebind_after_failure(  # pylint: disable=protected-access
+                            failed_server=failed_server,
+                            backoff_seconds=backoff_seconds,
+                        )
             finally:
                 self._last_retry_telemetry = RetryTelemetry(  # pylint: disable=protected-access
                     operation_kind=operation_kind,
@@ -114,6 +169,14 @@ def _auto_reconnect(operation_kind: str = "write"):
                     would_retry=would_retry,
                     recovered=recovered,
                     policy=dict(policy),
+                    attempt_count=attempt_count,
+                    operation_name=method.__name__,
+                    failed_server=failed_server_token,
+                    selected_server=self._mask_server_identifier(  # pylint: disable=protected-access
+                        self._selected_server  # pylint: disable=protected-access
+                    ),
+                    elapsed_seconds=max(0, time.monotonic() - started_at),
+                    exception_type=exception_type,
                 )
 
         return wrapper
@@ -125,11 +188,27 @@ class ADConnectionError(Exception):
     """Custom exception for errors related to Active Directory connections."""
 
 
+class ADBindError(ADConnectionError):
+    """Raised when an LDAP bind fails with safe diagnostic details."""
+
+    def __init__(
+        self,
+        result_code: int | str | None,
+        controller: str,
+    ) -> None:
+        self.result_code = result_code
+        self.controller = controller
+        super().__init__(
+            "Failed to bind to Active Directory "
+            f"(result_code={result_code!r}, controller={controller})"
+        )
+
+
 class ADMissingServersError(Exception):
     """Custom exception for errors related to missing Active Directory servers."""
 
 
-class ADConnection:
+class ADConnection:  # pylint: disable=too-many-public-methods
     """This class contains the functionality concerning the
     connection and the methods that gets data from AD and can modify the AD.
 
@@ -140,19 +219,125 @@ class ADConnection:
         - Invalid or empty mode values always resolve to ``legacy``.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
-        servers: list,
+        servers: list[str],
         search_base: str,
         enable_ldap_logging: bool = False,
+        *,
+        receive_timeout: float = 10,
+        connect_timeout: float | None = None,
+        page_size: int = 500,
+        read_retry_count: int = 1,
+        read_retry_backoff_seconds: float = 0,
+        write_retry_count: int = 0,
     ):
+        self._validate_connection_options(
+            receive_timeout=receive_timeout,
+            connect_timeout=connect_timeout,
+            page_size=page_size,
+            read_retry_count=read_retry_count,
+            read_retry_backoff_seconds=read_retry_backoff_seconds,
+            write_retry_count=write_retry_count,
+        )
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
 
         self._servers = servers
-        self.connection = self._get_connection(servers)
         self.search_base = search_base
+        self._options = _ADConnectionOptions(
+            receive_timeout=receive_timeout,
+            connect_timeout=connect_timeout,
+            page_size=page_size,
+            read_retry_count=read_retry_count,
+            read_retry_backoff_seconds=read_retry_backoff_seconds,
+            write_retry_count=write_retry_count,
+        )
         self._last_retry_telemetry: RetryTelemetry | None = None
+        self._selected_server: str | None = None
+        self.connection = self._get_connection(servers)
+
+    @property
+    def receive_timeout(self) -> float:
+        """Maximum seconds to wait for an LDAP response."""
+        return self._options.receive_timeout
+
+    @property
+    def connect_timeout(self) -> float | None:
+        """Maximum seconds to wait for a server connection, when configured."""
+        return self._options.connect_timeout
+
+    @property
+    def page_size(self) -> int:
+        """Default number of entries requested per LDAP search page."""
+        return self._options.page_size
+
+    @property
+    def read_retry_count(self) -> int:
+        """Maximum number of retries after the initial read attempt."""
+        return self._options.read_retry_count
+
+    @property
+    def read_retry_backoff_seconds(self) -> float:
+        """Seconds to wait between recoverable read attempts."""
+        return self._options.read_retry_backoff_seconds
+
+    @property
+    def write_retry_count(self) -> int:
+        """Maximum retries for writes; disabled unless explicitly configured."""
+        return self._options.write_retry_count
+
+    @staticmethod
+    def _validate_connection_options(  # pylint: disable=too-many-arguments
+        *,
+        receive_timeout: float,
+        connect_timeout: float | None,
+        page_size: int,
+        read_retry_count: int,
+        read_retry_backoff_seconds: float,
+        write_retry_count: int,
+    ) -> None:
+        """Validate connection policy before constructing LDAP objects."""
+
+        positive_numbers = {
+            "receive_timeout": receive_timeout,
+            "connect_timeout": connect_timeout,
+        }
+        for name, value in positive_numbers.items():
+            if value is None and name == "connect_timeout":
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or (isinstance(value, float) and not math.isfinite(value))
+                or value <= 0
+            ):
+                raise ValueError(f"{name} must be a positive number")
+
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0:
+            raise ValueError("page_size must be a positive integer")
+        if (
+            isinstance(read_retry_count, bool)
+            or not isinstance(read_retry_count, int)
+            or read_retry_count < 0
+        ):
+            raise ValueError("read_retry_count must be a non-negative integer")
+        if (
+            isinstance(write_retry_count, bool)
+            or not isinstance(write_retry_count, int)
+            or write_retry_count < 0
+        ):
+            raise ValueError("write_retry_count must be a non-negative integer")
+        if (
+            isinstance(read_retry_backoff_seconds, bool)
+            or not isinstance(read_retry_backoff_seconds, (int, float))
+            or (
+                isinstance(read_retry_backoff_seconds, float)
+                and not math.isfinite(read_retry_backoff_seconds)
+            )
+            or read_retry_backoff_seconds < 0
+        ):
+            raise ValueError("read_retry_backoff_seconds must be a non-negative number")
 
     @property
     def last_retry_telemetry(self) -> RetryTelemetry | None:
@@ -165,14 +350,17 @@ class ADConnection:
 
         return self._last_retry_telemetry
 
-    def _get_connection(self, servers: list) -> Connection:
+    def _get_connection(self, servers: list[str]) -> Connection:
         """initializes a connection to the active directory.
         """
         if not servers:
             raise ADMissingServersError  # Explicitly handle empty server list
 
         tls = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
-        ldap_servers = [Server(x, use_ssl=True, tls=tls) for x in servers]
+        server_options = {"use_ssl": True, "tls": tls}
+        if self.connect_timeout is not None:
+            server_options["connect_timeout"] = self.connect_timeout
+        ldap_servers = [Server(server, **server_options) for server in servers]
 
         server_pool = ServerPool(ldap_servers, ROUND_ROBIN, active=True, exhaust=True)
 
@@ -180,13 +368,82 @@ class ADConnection:
             server_pool,
             authentication=SASL,
             sasl_mechanism=GSSAPI,
-            receive_timeout=10,
+            receive_timeout=self.receive_timeout,
         )
-        if not connection.bind():
-            raise ADConnectionError(
-                f"Failed to bind to Active Directory: {connection.result['description']}"
+        try:
+            bound = connection.bind()
+        except LDAPException as exc:
+            controller = self._mask_server_identifier(
+                self._bound_server_identifier(connection)
             )
+            raise ADBindError(None, controller) from exc
+        if not bound:
+            result = connection.result if isinstance(connection.result, dict) else {}
+            result_code = result.get("result")
+            controller = self._mask_server_identifier(
+                self._bound_server_identifier(connection)
+            )
+            raise ADBindError(result_code, controller)
+        self._selected_server = self._bound_server_identifier(connection)
         return connection
+
+    @staticmethod
+    def _bound_server_identifier(connection: Connection) -> str | None:
+        """Return the bound server host for internal failover decisions."""
+
+        server = getattr(connection, "server", None)
+        host = getattr(server, "host", None)
+        return host if isinstance(host, str) else None
+
+    @staticmethod
+    def _normalize_server_identifier(server: str) -> str:
+        """Normalize configured URLs and bound hosts for internal comparison."""
+
+        candidate = server.strip()
+        parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+        return (parsed.hostname or candidate).casefold()
+
+    @classmethod
+    def _mask_server_identifier(cls, server: str | None) -> str:
+        """Return a stable non-reversible controller token for logs and telemetry."""
+
+        if not server:
+            return "controller-unknown"
+        normalized = cls._normalize_server_identifier(server)
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
+        return f"controller-{digest}"
+
+    def _prioritize_alternate_servers(self, failed_server: str | None) -> list[str]:
+        """Order configured controllers with the failed controller last."""
+
+        if not failed_server or len(self._servers) < 2:
+            return list(self._servers)
+        normalized_failed = self._normalize_server_identifier(failed_server)
+        alternates = [
+            server
+            for server in self._servers
+            if self._normalize_server_identifier(server) != normalized_failed
+        ]
+        failed = [
+            server
+            for server in self._servers
+            if self._normalize_server_identifier(server) == normalized_failed
+        ]
+        return alternates + failed if alternates else list(self._servers)
+
+    def _rebind_after_failure(
+        self,
+        *,
+        failed_server: str | None,
+        backoff_seconds: float,
+    ) -> None:
+        """Close a failed connection, back off, and prefer another controller."""
+
+        self._close_connection()
+        if backoff_seconds > 0:
+            time.sleep(backoff_seconds)
+        ordered_servers = self._prioritize_alternate_servers(failed_server)
+        self.connection = self._get_connection(ordered_servers)
 
     def rebind(self) -> None:
         """Re-establish the LDAP connection using the original server list.
@@ -205,18 +462,45 @@ class ADConnection:
         except (LDAPSessionTerminatedByServerError, LDAPCommunicationError, OSError):
             logger.debug("Could not cleanly unbind the previous connection.")
 
-    def _get_paged_search(self, search_filter: str, attributes: list[str]):
+    def _get_paged_search(  # pylint: disable=too-many-arguments
+        self,
+        search_filter: str,
+        attributes: list[str] | str,
+        *,
+        search_base: str,
+        search_scope: str,
+        page_size: int,
+    ):
         """Returns a entry_generator.
         """
         entry_generator = self.connection.extend.standard.paged_search(
-            search_base=self.search_base,
+            search_base=search_base,
             search_filter=search_filter,
-            search_scope=SUBTREE,
+            search_scope=search_scope,
             attributes=attributes,
-            paged_size=500,
+            paged_size=page_size,
             generator=True,
         )
         return entry_generator
+
+    @staticmethod
+    def _validate_search_options(
+        search_base: str | None,
+        search_scope: str,
+        page_size: int | None,
+    ) -> None:
+        """Validate per-search overrides before invoking LDAP."""
+
+        if search_base is not None and (
+            not isinstance(search_base, str) or not search_base.strip()
+        ):
+            raise ValueError("search_base must be a non-empty string or None")
+        if search_scope not in _SUPPORTED_SEARCH_SCOPES:
+            raise ValueError("search_scope must be BASE, LEVEL, or SUBTREE")
+        if page_size is not None and (
+            isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0
+        ):
+            raise ValueError("page_size must be a positive integer or None")
 
     def _set_ou_for_object(self, ad_object: dict[str, Any]) -> None:
         """Add the OU extracted from ``distinguishedName`` to ``ad_object`` in place."""
@@ -225,20 +509,49 @@ class ADConnection:
             return
 
         distinguished_name = ad_object['distinguishedName']
-        if ',' not in distinguished_name:
+        if not isinstance(distinguished_name, str):
             return
-
-        ad_object['ou'] = ','.join(distinguished_name.split(',')[1:])
+        try:
+            parsed_components = parse_dn(
+                distinguished_name,
+                escape=True,
+                strip=True,
+            )
+        except LDAPInvalidDnError:
+            return
+        first_rdn_end = next(
+            (
+                index
+                for index, (_attribute, _value, separator) in enumerate(parsed_components)
+                if separator != '+'
+            ),
+            len(parsed_components) - 1,
+        )
+        parent_components = parsed_components[first_rdn_end + 1:]
+        if parent_components:
+            ad_object['ou'] = ''.join(
+                f"{attribute}={value}{separator}"
+                for attribute, value, separator in parent_components
+            )
 
     @_auto_reconnect("read")
-    def search(
-        self, search_filter: str, attributes: list[str] | None = None
+    def search(  # pylint: disable=too-many-arguments
+        self,
+        search_filter: str,
+        attributes: list[str] | None = None,
+        *,
+        search_base: str | None = None,
+        search_scope: str = SUBTREE,
+        page_size: int | None = None,
     ) -> list[dict[str, str]]:
         """Returns a single result or false if none exist.
 
         Args:
             search_filter (str): An LDAP filter string.
             attributes (list[str]): A list of attributes that will be fetched.
+            search_base (str | None): Base DN override; ``None`` uses the connection default.
+            search_scope (str): One of the standard ``ldap3`` search scope constants.
+            page_size (int | None): Page-size override; ``None`` uses the connection default.
 
         Returns:
             list[dict[str, str]]: AD objects presented as dictionaries.
@@ -247,7 +560,16 @@ class ADConnection:
         if attributes is None:
             attributes = ALL_ATTRIBUTES
 
-        entry_generator = self._get_paged_search(search_filter, attributes)
+        self._validate_search_options(search_base, search_scope, page_size)
+        effective_search_base = self.search_base if search_base is None else search_base
+        effective_page_size = self.page_size if page_size is None else page_size
+        entry_generator = self._get_paged_search(
+            search_filter,
+            attributes,
+            search_base=effective_search_base,
+            search_scope=search_scope,
+            page_size=effective_page_size,
+        )
         result_list = [x['attributes'] for x in entry_generator if 'attributes' in x]
         for ad_object in result_list:
             self._set_ou_for_object(ad_object)

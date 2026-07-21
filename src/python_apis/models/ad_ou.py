@@ -44,11 +44,79 @@ Optional and ClassVar.
 """
 
 
-from typing import Optional, ClassVar
+from string import hexdigits
+from typing import Any, Optional, ClassVar
+from ldap3.core.exceptions import LDAPInvalidDnError
+from ldap3.utils.dn import parse_dn
 from sqlalchemy import Column, String
 from sqlalchemy.dialects.mssql import DATETIME2
+from sqlalchemy.orm import reconstructor
 
 from .base import Base
+
+CanonicalDistinguishedName = tuple[tuple[tuple[str, str], ...], ...]
+
+
+def _decode_distinguished_name_value(value: str) -> str:
+    """Decode RFC 4514 escaped characters and UTF-8 hex octets."""
+
+    decoded: list[str] = []
+    hex_octets = bytearray()
+
+    def flush_hex_octets() -> None:
+        if hex_octets:
+            decoded.append(hex_octets.decode('utf-8', errors='surrogateescape'))
+            hex_octets.clear()
+
+    index = 0
+    while index < len(value):
+        if value[index] != '\\':
+            flush_hex_octets()
+            decoded.append(value[index])
+            index += 1
+            continue
+        if (
+            index + 2 < len(value)
+            and value[index + 1] in hexdigits
+            and value[index + 2] in hexdigits
+        ):
+            hex_octets.append(int(value[index + 1:index + 3], 16))
+            index += 3
+            continue
+        flush_hex_octets()
+        if index + 1 < len(value):
+            decoded.append(value[index + 1])
+            index += 2
+        else:
+            decoded.append('\\')
+            index += 1
+    flush_hex_octets()
+    return ''.join(decoded)
+
+
+def canonicalize_distinguished_name(distinguished_name: str) -> CanonicalDistinguishedName:
+    """Return a hashable key for LDAP-equivalent distinguished-name spellings."""
+
+    if not isinstance(distinguished_name, str) or not distinguished_name.strip():
+        raise ValueError("Invalid distinguished name")
+    try:
+        parsed_components = parse_dn(distinguished_name, escape=True, strip=True)
+    except LDAPInvalidDnError as exc:
+        raise ValueError("Invalid distinguished name") from exc
+
+    relative_names: list[tuple[tuple[str, str], ...]] = []
+    current_parts: list[tuple[str, str]] = []
+    for attribute, value, separator in parsed_components:
+        current_parts.append((
+            attribute.casefold(),
+            _decode_distinguished_name_value(value).casefold(),
+        ))
+        if separator != '+':
+            relative_names.append(tuple(sorted(current_parts)))
+            current_parts = []
+    if current_parts:
+        relative_names.append(tuple(sorted(current_parts)))
+    return tuple(relative_names)
 
 class NotSetException(Exception):
     """
@@ -64,6 +132,7 @@ class ADOrganizationalUnit(Base):
     """Active Directory Organizational Unit model representing OU attributes in the database."""
 
     __tablename__ = 'ADOrganizationalUnit'
+    __allow_unmapped__ = True
 
     distinguishedName = Column(String(255), primary_key=True)
     name = Column(String(256))
@@ -82,8 +151,20 @@ class ADOrganizationalUnit(Base):
 
     # Non-database field
     changes: ClassVar[Optional[str]] = None
-    children: ClassVar[Optional[list['ADOrganizationalUnit']]] = None
-    parent: ClassVar[Optional['ADOrganizationalUnit']] = None
+    children: list['ADOrganizationalUnit']
+    parent: Optional['ADOrganizationalUnit']
+    ldap_attributes: dict[str, Any]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._initialize_hierarchy()
+
+    @reconstructor
+    def _initialize_hierarchy(self) -> None:
+        """Initialize non-persistent hierarchy links for each model instance."""
+        self.children = []
+        self.parent = None
+        self.ldap_attributes = {}
 
     def __repr__(self) -> str:
         """Return a string representation of the ADOrganizationalUnit instance."""
@@ -98,9 +179,10 @@ class ADOrganizationalUnit(Base):
         Returns:
             Optional[str]: The name of the parent OU, or None if it doesn't exist.
         """
-        if len(self.parse_distinguished_name()) < 1:
+        components = self.parse_distinguished_name()
+        if len(components) < 2:
             return None
-        return ','.join(self.parse_distinguished_name()[:-1])
+        return ','.join(components[1:])
 
     @property
     def child_ou_names(self) -> list[str]:
@@ -109,18 +191,35 @@ class ADOrganizationalUnit(Base):
         Returns:
             list[str]: A list of child OU names.
         """
-        if self.children is None:
-            raise NotSetException(variable_name="children")
-        self.children: list[ADOrganizationalUnit]
-        return [child.name for child in self.children]
+        return [str(child.name) for child in self.children if child.name is not None]
 
     def parse_distinguished_name(self) -> list[str]:
-        """Parse the distinguished name into its components.
+        """Parse the distinguished name into LDAP-aware RDN components.
 
         Returns:
-            list[str]: A list of components from the distinguished name.
+            list[str]: RDN strings with LDAP escaping preserved.
+
+        Raises:
+            ValueError: If the distinguished name is absent or malformed.
         """
-        return self.distinguishedName.split(',')
+        distinguished_name = self.distinguishedName
+        if not isinstance(distinguished_name, str) or not distinguished_name.strip():
+            raise ValueError("Invalid distinguished name")
+        try:
+            parsed_components = parse_dn(distinguished_name, escape=True, strip=True)
+        except LDAPInvalidDnError as exc:
+            raise ValueError("Invalid distinguished name") from exc
+
+        relative_names: list[str] = []
+        current_parts: list[str] = []
+        for attribute, value, separator in parsed_components:
+            current_parts.append(f"{attribute}={value}")
+            if separator != '+':
+                relative_names.append('+'.join(current_parts))
+                current_parts = []
+        if current_parts:
+            relative_names.append('+'.join(current_parts))
+        return relative_names
 
     def get_hierarchy(self) -> list[str]:
         """Get the hierarchy of OUs from the root to this OU.
@@ -128,11 +227,12 @@ class ADOrganizationalUnit(Base):
         Returns:
             list[str]: A list of OU names from the root to this OU.
         """
-        hierarchy = []
+        hierarchy: list[str] = []
         parts = self.parse_distinguished_name()
         for part in parts:
-            if part.startswith('OU='):
-                hierarchy.insert(0, part[3:])
+            for attribute, value, _separator in parse_dn(part, escape=True, strip=True):
+                if attribute.casefold() == 'ou':
+                    hierarchy.insert(0, value)
         return hierarchy
 
     def get_full_path(self) -> str:

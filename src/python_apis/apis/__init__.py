@@ -39,7 +39,11 @@ Dependencies:
 """
 
 from python_apis.apis.ad_api import (
+    ADBindError,
     ADConnection,
+    ADConnectionError,
+    ADMissingServersError,
+    AD_RECOVERABLE_READ_EXCEPTIONS,
     AD_READ_RETRY_POLICY,
     AD_WRITE_RETRY_POLICY,
     RetryTelemetry,
@@ -48,7 +52,11 @@ from python_apis.apis.jira_api import JiraConnection
 from python_apis.apis.sql_api import SQLConnection
 
 __all__ = [
+    "ADBindError",
     "ADConnection",
+    "ADConnectionError",
+    "ADMissingServersError",
+    "AD_RECOVERABLE_READ_EXCEPTIONS",
     "AD_READ_RETRY_POLICY",
     "AD_WRITE_RETRY_POLICY",
     "RetryTelemetry",

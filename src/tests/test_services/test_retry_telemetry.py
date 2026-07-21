@@ -22,6 +22,17 @@ from python_apis.services.compatibility_mode import (
     finalize_ad_write_response,
 )
 
+_EXPLICIT_WRITE_RETRY_POLICY = {
+    'operation_kind': 'write',
+    'max_attempts': 2,
+    'max_retries': 1,
+    'strategy': 'rebind_once',
+    'retry_on': (
+        'LDAPSessionTerminatedByServerError',
+        'LDAPCommunicationError',
+    ),
+}
+
 
 class TestApiLayerRetryTelemetry(unittest.TestCase):
     """Validate telemetry recorded by the auto-reconnect decorator."""
@@ -51,17 +62,24 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         self.assertFalse(telemetry.retried)
         self.assertFalse(telemetry.would_retry)
         self.assertFalse(telemetry.recovered)
-        self.assertEqual(telemetry.policy, AD_READ_RETRY_POLICY)
+        self.assertEqual(telemetry.attempt_count, 1)
+        self.assertEqual(telemetry.operation_name, 'search')
+        self.assertIsNone(telemetry.failed_server)
+        self.assertTrue(telemetry.selected_server.startswith('controller-'))
+        self.assertGreaterEqual(telemetry.elapsed_seconds, 0)
+        self.assertIsNone(telemetry.exception_type)
+        self.assertEqual(telemetry.policy['max_retries'], AD_READ_RETRY_POLICY['max_retries'])
+        self.assertEqual(telemetry.policy['backoff_seconds'], 0)
 
     def test_recover_after_retry_records_write_telemetry(self):
-        conn = ADConnection(self.servers, self.search_base)
+        conn = ADConnection(self.servers, self.search_base, write_retry_count=1)
         self.mock_connection.modify.side_effect = [
             LDAPSessionTerminatedByServerError('boom'),
             True,
         ]
         self.mock_connection.result = {'description': 'success'}
 
-        with patch.object(conn, 'rebind') as mock_rebind:
+        with patch.object(conn, '_rebind_after_failure') as mock_rebind:
             response = conn.modify('CN=x,dc=example,dc=com', [('title', 'Dev')])
 
         mock_rebind.assert_called_once()
@@ -72,13 +90,31 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         self.assertTrue(telemetry.retried)
         self.assertTrue(telemetry.would_retry)
         self.assertTrue(telemetry.recovered)
-        self.assertEqual(telemetry.policy, AD_WRITE_RETRY_POLICY)
+        self.assertEqual(telemetry.attempt_count, 2)
+        self.assertEqual(telemetry.exception_type, 'LDAPSessionTerminatedByServerError')
+        self.assertEqual(telemetry.policy['max_retries'], 1)
+
+    def test_write_retry_is_disabled_by_default(self):
+        conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.modify.side_effect = LDAPCommunicationError('response lost')
+
+        with patch.object(conn, '_rebind_after_failure') as mock_rebind:
+            with self.assertRaises(LDAPCommunicationError):
+                conn.modify('CN=x,dc=example,dc=com', [('title', 'Dev')])
+
+        mock_rebind.assert_not_called()
+        telemetry = conn.last_retry_telemetry
+        self.assertEqual(telemetry.retry_count, 0)
+        self.assertFalse(telemetry.would_retry)
+        self.assertEqual(telemetry.attempt_count, 1)
+        self.assertEqual(telemetry.exception_type, 'LDAPCommunicationError')
+        self.assertEqual(telemetry.policy['max_retries'], AD_WRITE_RETRY_POLICY['max_retries'])
 
     def test_non_recoverable_exception_propagates_without_retry(self):
         conn = ADConnection(self.servers, self.search_base)
         self.mock_connection.modify.side_effect = ValueError('bad input')
 
-        with patch.object(conn, 'rebind') as mock_rebind:
+        with patch.object(conn, '_rebind_after_failure') as mock_rebind:
             with self.assertRaises(ValueError):
                 conn.modify('CN=x,dc=example,dc=com', [('title', 'Dev')])
 
@@ -90,13 +126,13 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         self.assertFalse(telemetry.recovered)
 
     def test_failed_retry_records_attempt_without_recovery(self):
-        conn = ADConnection(self.servers, self.search_base)
+        conn = ADConnection(self.servers, self.search_base, write_retry_count=1)
         self.mock_connection.modify.side_effect = [
             LDAPCommunicationError('first'),
             LDAPCommunicationError('second'),
         ]
 
-        with patch.object(conn, 'rebind') as mock_rebind:
+        with patch.object(conn, '_rebind_after_failure') as mock_rebind:
             with self.assertRaises(LDAPCommunicationError):
                 conn.modify('CN=x,dc=example,dc=com', [('title', 'Dev')])
 
@@ -106,6 +142,17 @@ class TestApiLayerRetryTelemetry(unittest.TestCase):
         self.assertTrue(telemetry.retried)
         self.assertTrue(telemetry.would_retry)
         self.assertFalse(telemetry.recovered)
+        self.assertEqual(telemetry.attempt_count, 2)
+        self.assertEqual(telemetry.exception_type, 'LDAPCommunicationError')
+
+    @patch('python_apis.apis.ad_api.time.monotonic', side_effect=[100, 100.25])
+    def test_elapsed_time_is_recorded(self, _mock_monotonic):
+        conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+
+        conn.search('(objectClass=user)', ['cn'])
+
+        self.assertEqual(conn.last_retry_telemetry.elapsed_seconds, 0.25)
 
     def test_telemetry_policy_is_isolated_from_global(self):
         conn = ADConnection(self.servers, self.search_base)
@@ -130,7 +177,7 @@ class TestEnvelopeRetryFields(unittest.TestCase):
             retry_count=1,
             retried=True,
             would_retry=True,
-            retry_policy=AD_WRITE_RETRY_POLICY,
+            retry_policy=_EXPLICIT_WRITE_RETRY_POLICY,
         )
 
     def test_retry_fields_present_on_strict_envelope(self):
@@ -140,7 +187,7 @@ class TestEnvelopeRetryFields(unittest.TestCase):
         self.assertTrue(payload['retried'])
         self.assertTrue(payload['would_retry'])
         self.assertTrue(payload['did_retry'])
-        self.assertEqual(payload['retry_policy'], AD_WRITE_RETRY_POLICY)
+        self.assertEqual(payload['retry_policy'], _EXPLICIT_WRITE_RETRY_POLICY)
         self.assertNotIn('result', payload)
         self.assertNotIn('message', payload)
 
@@ -164,7 +211,7 @@ class TestWriteResponseRetryIntegration(unittest.TestCase):
             retried=True,
             would_retry=True,
             recovered=True,
-            policy=AD_WRITE_RETRY_POLICY,
+            policy=_EXPLICIT_WRITE_RETRY_POLICY,
         )
 
     def test_telemetry_included_on_strict_envelope(self):

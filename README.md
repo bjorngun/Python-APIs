@@ -282,6 +282,17 @@ feat(#123): task 2 - add membership paging contract
 The pull request template's **Task-Bounded Commits (for planned work)** checklist confirms this
 cadence was followed before review.
 
+## AD Resilience and OU Inheritance
+
+- [AD connection resilience](docs/ad-resilience.md) documents connection options, flexible search,
+   whole-query retry, controller rotation, telemetry, and write retry safety.
+- [Resilient search example](examples/ad_resilient_search.py) uses the public connection API and
+   reports only aggregate counts and masked retry telemetry.
+- [AD resilience and OU inheritance migration](docs/migration/ad-resilience-ou-inheritance.md)
+   covers one-tree reuse, generic inheritance rules, bulk resolution, and staged rollout.
+- [OU inheritance example](examples/ou_inheritance.py) resolves neutral fields and applies returned
+   values explicitly without requiring a consumer ORM type.
+
 ## Architecture Decision Records
 
 - AD response modernization policy is defined in [ADR 0001](docs/adr/0001-ad-response-modernization.md).

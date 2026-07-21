@@ -7,17 +7,38 @@ organizational units.
 
 from logging import getLogger
 import os
-from typing import Any, Optional
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any, Optional, cast
 
+from ldap3 import SUBTREE
 from ldap3.core.exceptions import LDAPException
 from pydantic import ValidationError
 
 from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADOrganizationalUnit, ADBatchReadResult, base
+from python_apis.models.ad_ou import (
+    CanonicalDistinguishedName,
+    canonicalize_distinguished_name,
+)
 from python_apis.schemas import ADOrganizationalUnitSchema
 from python_apis.services.batch_read import build_batch_read_result
 from python_apis.services.compatibility_mode import finalize_ad_write_response
+from python_apis.services.ou_inheritance import (
+    OUAttributeRule,
+    resolve_inherited_attributes as resolve_ou_inherited_attributes,
+    resolve_inherited_attributes_for_dns,
+)
+
+
+class ADOrganizationalUnitTreeError(ValueError):
+    """Raised when an LDAP record cannot be represented safely in an OU tree."""
+
+    def __init__(self, entry_index: int, reason: str) -> None:
+        self.entry_index = entry_index
+        self.reason = reason
+        super().__init__(f"Cannot build OU tree from entry {entry_index}: {reason}")
+
 
 class ADOrganizationalUnitService:
     """Service class for interacting with Active Directory organizational units.
@@ -28,8 +49,8 @@ class ADOrganizationalUnitService:
 
     def __init__(
         self,
-        ad_connection: ADConnection = None,
-        sql_connection: SQLConnection = None,
+        ad_connection: ADConnection | None = None,
+        sql_connection: SQLConnection | None = None,
         ldap_logging: bool = False,
     ):
         """Initialize the ADOrganizationalUnitService with an ADConnection and a db connection.
@@ -50,6 +71,19 @@ class ADOrganizationalUnitService:
         if ad_connection is None:
             ad_connection = self._get_ad_connection(ldap_logging)
         self.ad_connection = ad_connection
+
+    @classmethod
+    def for_active_directory(
+        cls,
+        ad_connection: ADConnection,
+    ) -> 'ADOrganizationalUnitService':
+        """Create an AD-only OU service without SQL or environment initialization."""
+
+        service = cls.__new__(cls)
+        service.logger = getLogger(__name__)
+        service.ad_connection = ad_connection
+        service.sql_connection = cast(SQLConnection, None)
+        return service
 
     def _get_sql_connection(self) -> SQLConnection:
         """Create and return a SQLConnection instance based on environment variables.
@@ -89,21 +123,237 @@ class ADOrganizationalUnitService:
                 ADOrganizationalUnit instances.
         """
         for ou in ad_ous.values():
-            if ou.parseDistinguishedName in ad_ous:
-                parent_ou = ad_ous[ou.parseDistinguishedName]
+            ou.children = []
+            ou.parent = None
 
-                # Set up the child relation
-                if ou.children is None:
-                    ou.children = []
-                if parent_ou.children is None:
-                    parent_ou.children = []
+        canonical_ous = {
+            canonicalize_distinguished_name(str(ou.distinguishedName)): ou
+            for ou in ad_ous.values()
+        }
+        for ou in ad_ous.values():
+            parent_distinguished_name = ou.parent_ou_distinguished_name
+            if parent_distinguished_name is not None:
+                parent_ou = canonical_ous.get(
+                    canonicalize_distinguished_name(parent_distinguished_name)
+                )
+            else:
+                parent_ou = None
+            if parent_ou is not None:
+
                 parent_ou.children.append(ou)
-
-                # Set up the parent relation
                 ou.parent = parent_ou
 
+    @staticmethod
+    def _requested_ou_attributes(attributes: list[str] | None) -> list[str]:
+        """Return validated de-duplicated attributes including distinguishedName."""
+
+        requested = (
+            [*ADOrganizationalUnit.get_attribute_list(), 'street']
+            if attributes is None
+            else list(attributes)
+        )
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for attribute in requested:
+            if not isinstance(attribute, str) or not attribute.strip():
+                raise ValueError("OU attributes must be non-empty strings")
+            canonical = (
+                'distinguishedName'
+                if attribute.casefold() == 'distinguishedname'
+                else attribute
+            )
+            key = canonical.casefold()
+            if key not in seen:
+                normalized.append(canonical)
+                seen.add(key)
+        if 'distinguishedname' not in seen:
+            normalized.append('distinguishedName')
+        return normalized
+
+    @staticmethod
+    def _normalize_ou_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalize case and scalar/list LDAP values for the OU schema."""
+
+        canonical_names = {
+            attribute.casefold(): attribute
+            for attribute in ADOrganizationalUnit.get_attribute_list()
+        }
+        normalized: dict[str, Any] = {}
+        for attribute, value in entry.items():
+            canonical = canonical_names.get(attribute.casefold(), attribute)
+            if isinstance(value, (list, tuple)):
+                values = [item for item in value if item not in (None, '')]
+                if not values:
+                    normalized[canonical] = None
+                elif len(values) == 1:
+                    normalized[canonical] = values[0]
+                else:
+                    normalized[canonical] = ','.join(map(str, values))
+            elif isinstance(value, str) and not value.strip():
+                normalized[canonical] = None
+            else:
+                normalized[canonical] = value
+        return normalized
+
+    def get_ou_tree(
+        self,
+        attributes: list[str] | None = None,
+        search_base: str | None = None,
+    ) -> dict[str, ADOrganizationalUnit]:
+        """Fetch and build a DN-keyed OU hierarchy with one subtree query.
+
+        Malformed, missing-DN, and duplicate records abort the build with an
+        :class:`ADOrganizationalUnitTreeError`; they are never silently dropped.
+        Missing parent records leave an OU as an unlinked root/orphan node.
+        """
+
+        requested_attributes = self._requested_ou_attributes(attributes)
+        entries = self.ad_connection.search(
+            '(objectClass=organizationalUnit)',
+            requested_attributes,
+            search_base=search_base,
+            search_scope=SUBTREE,
+        )
+        ou_tree: dict[str, ADOrganizationalUnit] = {}
+        canonical_distinguished_names: set[CanonicalDistinguishedName] = set()
+        for entry_index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping):
+                raise ADOrganizationalUnitTreeError(entry_index, 'invalid record')
+            normalized = self._normalize_ou_entry(entry)
+            distinguished_name = normalized.get('distinguishedName')
+            if not isinstance(distinguished_name, str) or not distinguished_name:
+                raise ADOrganizationalUnitTreeError(
+                    entry_index,
+                    'missing distinguishedName',
+                )
+            try:
+                canonical_distinguished_name = canonicalize_distinguished_name(
+                    distinguished_name
+                )
+            except ValueError as exc:
+                raise ADOrganizationalUnitTreeError(
+                    entry_index,
+                    'invalid organizational unit',
+                ) from exc
+            if canonical_distinguished_name in canonical_distinguished_names:
+                raise ADOrganizationalUnitTreeError(
+                    entry_index,
+                    'duplicate distinguishedName',
+                )
+            try:
+                validated_data = ADOrganizationalUnitSchema(**normalized).model_dump()
+                organizational_unit = ADOrganizationalUnit(**validated_data)
+                organizational_unit.ldap_attributes = {
+                    attribute: value
+                    for attribute, value in normalized.items()
+                    if attribute not in validated_data
+                }
+                organizational_unit.parse_distinguished_name()
+            except (ValidationError, ValueError) as exc:
+                raise ADOrganizationalUnitTreeError(
+                    entry_index,
+                    'invalid organizational unit',
+                ) from exc
+            ou_tree[distinguished_name] = organizational_unit
+            canonical_distinguished_names.add(canonical_distinguished_name)
+
+        self.set_ou_children_and_parent(ou_tree)
+        return ou_tree
+
+    def resolve_inherited_attributes(
+        self,
+        ou_dn: str,
+        rules: Mapping[str, OUAttributeRule],
+        *,
+        ou_tree: Mapping[str, ADOrganizationalUnit],
+    ) -> dict[str, object | None]:
+        """Resolve caller-defined values from an OU toward the directory root."""
+
+        return resolve_ou_inherited_attributes(ou_dn, rules, ou_tree)
+
+    @staticmethod
+    def _object_ou_dn(
+        item: object,
+        index: int,
+        distinguished_name_attribute: str,
+        get_ou_dn: Callable[[object], str | None] | None,
+    ) -> str:
+        """Extract and validate one object's OU distinguished name."""
+
+        if get_ou_dn is not None:
+            ou_dn = get_ou_dn(item)
+        elif isinstance(item, Mapping):
+            ou_dn = item.get(distinguished_name_attribute)
+        else:
+            ou_dn = getattr(item, distinguished_name_attribute, None)
+        if not isinstance(ou_dn, str) or not ou_dn.strip():
+            raise ValueError(f"Object at index {index} has no OU distinguished name")
+        return ou_dn
+
+    def resolve_inherited_attributes_for_objects(  # pylint: disable=too-many-arguments,too-many-locals
+        self,
+        objects: Iterable[object],
+        rules: Mapping[str, OUAttributeRule],
+        *,
+        distinguished_name_attribute: str = 'distinguishedName',
+        get_ou_dn: Callable[[object], str | None] | None = None,
+        ou_tree: Mapping[str, ADOrganizationalUnit] | None = None,
+        search_base: str | None = None,
+    ) -> list[dict[str, object | None]]:
+        """Resolve ordered values for arbitrary objects with at most one OU query."""
+
+        if get_ou_dn is not None and not callable(get_ou_dn):
+            raise ValueError("get_ou_dn must be callable or None")
+        if get_ou_dn is None and (
+            not isinstance(distinguished_name_attribute, str)
+            or not distinguished_name_attribute.strip()
+        ):
+            raise ValueError("distinguished_name_attribute must be a non-empty string")
+        for target, rule in rules.items():
+            if not isinstance(target, str) or not target.strip():
+                raise ValueError("OU rule targets must be non-empty strings")
+            if not isinstance(rule, OUAttributeRule):
+                raise TypeError("OU rule values must be OUAttributeRule instances")
+
+        materialized_objects = list(objects)
+        if not materialized_objects:
+            return []
+
+        resolved_tree = ou_tree
+        if resolved_tree is None:
+            required_attributes: list[str] = []
+            seen_attributes: set[str] = set()
+            for rule in rules.values():
+                for attribute in (rule.source, *rule.aliases):
+                    key = attribute.casefold()
+                    if key not in seen_attributes:
+                        required_attributes.append(attribute)
+                        seen_attributes.add(key)
+            resolved_tree = self.get_ou_tree(
+                attributes=required_attributes,
+                search_base=search_base,
+            )
+
+        object_ou_dns: list[str] = []
+        for index, item in enumerate(materialized_objects):
+            object_ou_dns.append(self._object_ou_dn(
+                item,
+                index,
+                distinguished_name_attribute,
+                get_ou_dn,
+            ))
+        return resolve_inherited_attributes_for_dns(
+            object_ou_dns,
+            rules,
+            resolved_tree,
+        )
+
     def get_deepest_ou_field(
-        self, ou: ADOrganizationalUnit, field: str, default_value: Optional[str] = None):
+        self,
+        ou: ADOrganizationalUnit | None,
+        field: str,
+        default_value: Optional[str] = None,
+    ):
         """Recursively get the value of a field from the deepest organizational unit.
 
         Args:

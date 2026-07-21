@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ldap3.utils.log import set_library_log_detail_level, BASIC
-from ldap3 import (ALL_ATTRIBUTES, BASE, MODIFY_ADD, MODIFY_DELETE,
+from ldap3 import (ALL_ATTRIBUTES, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, GSSAPI,
                    Connection, Server, ServerPool, Tls)
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
 _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
+_SUPPORTED_SEARCH_SCOPES = frozenset((BASE, LEVEL, SUBTREE))
 
 
 def _build_retry_policy(operation_kind: str) -> dict[str, Any]:
@@ -300,18 +301,45 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         except (LDAPSessionTerminatedByServerError, LDAPCommunicationError, OSError):
             logger.debug("Could not cleanly unbind the previous connection.")
 
-    def _get_paged_search(self, search_filter: str, attributes: list[str]):
+    def _get_paged_search(  # pylint: disable=too-many-arguments
+        self,
+        search_filter: str,
+        attributes: list[str] | str,
+        *,
+        search_base: str,
+        search_scope: str,
+        page_size: int,
+    ):
         """Returns a entry_generator.
         """
         entry_generator = self.connection.extend.standard.paged_search(
-            search_base=self.search_base,
+            search_base=search_base,
             search_filter=search_filter,
-            search_scope=SUBTREE,
+            search_scope=search_scope,
             attributes=attributes,
-            paged_size=500,
+            paged_size=page_size,
             generator=True,
         )
         return entry_generator
+
+    @staticmethod
+    def _validate_search_options(
+        search_base: str | None,
+        search_scope: str,
+        page_size: int | None,
+    ) -> None:
+        """Validate per-search overrides before invoking LDAP."""
+
+        if search_base is not None and (
+            not isinstance(search_base, str) or not search_base.strip()
+        ):
+            raise ValueError("search_base must be a non-empty string or None")
+        if search_scope not in _SUPPORTED_SEARCH_SCOPES:
+            raise ValueError("search_scope must be BASE, LEVEL, or SUBTREE")
+        if page_size is not None and (
+            isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0
+        ):
+            raise ValueError("page_size must be a positive integer or None")
 
     def _set_ou_for_object(self, ad_object: dict[str, Any]) -> None:
         """Add the OU extracted from ``distinguishedName`` to ``ad_object`` in place."""
@@ -326,14 +354,23 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         ad_object['ou'] = ','.join(distinguished_name.split(',')[1:])
 
     @_auto_reconnect("read")
-    def search(
-        self, search_filter: str, attributes: list[str] | None = None
+    def search(  # pylint: disable=too-many-arguments
+        self,
+        search_filter: str,
+        attributes: list[str] | None = None,
+        *,
+        search_base: str | None = None,
+        search_scope: str = SUBTREE,
+        page_size: int | None = None,
     ) -> list[dict[str, str]]:
         """Returns a single result or false if none exist.
 
         Args:
             search_filter (str): An LDAP filter string.
             attributes (list[str]): A list of attributes that will be fetched.
+            search_base (str | None): Base DN override; ``None`` uses the connection default.
+            search_scope (str): One of the standard ``ldap3`` search scope constants.
+            page_size (int | None): Page-size override; ``None`` uses the connection default.
 
         Returns:
             list[dict[str, str]]: AD objects presented as dictionaries.
@@ -342,7 +379,16 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         if attributes is None:
             attributes = ALL_ATTRIBUTES
 
-        entry_generator = self._get_paged_search(search_filter, attributes)
+        self._validate_search_options(search_base, search_scope, page_size)
+        effective_search_base = self.search_base if search_base is None else search_base
+        effective_page_size = self.page_size if page_size is None else page_size
+        entry_generator = self._get_paged_search(
+            search_filter,
+            attributes,
+            search_base=effective_search_base,
+            search_scope=search_scope,
+            page_size=effective_page_size,
+        )
         result_list = [x['attributes'] for x in entry_generator if 'attributes' in x]
         for ad_object in result_list:
             self._set_ou_for_object(ad_object)

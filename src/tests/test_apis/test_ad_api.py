@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import ANY, call, patch, MagicMock
 import ssl
-from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, SUBTREE
+from ldap3 import BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, SUBTREE
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 from python_apis.apis.ad_api import (
     ADConnection,
@@ -145,6 +145,62 @@ class TestADConnection(unittest.TestCase):
             paged_size=500,
             generator=True,
         )
+
+    def test_search_forwards_custom_base_scope_and_page_size(self):
+        ad_conn = ADConnection(self.servers, self.search_base, page_size=250)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+
+        ad_conn.search(
+            '(objectClass=organizationalUnit)',
+            ['distinguishedName'],
+            search_base='OU=Departments,DC=example,DC=com',
+            search_scope=LEVEL,
+            page_size=25,
+        )
+
+        self.mock_connection.extend.standard.paged_search.assert_called_once_with(
+            search_base='OU=Departments,DC=example,DC=com',
+            search_filter='(objectClass=organizationalUnit)',
+            search_scope=LEVEL,
+            attributes=['distinguishedName'],
+            paged_size=25,
+            generator=True,
+        )
+        self.assertEqual(ad_conn.page_size, 250)
+
+    def test_search_accepts_standard_ldap_scopes(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        for search_scope in (BASE, LEVEL, SUBTREE):
+            with self.subTest(search_scope=search_scope):
+                self.mock_connection.extend.standard.paged_search.reset_mock()
+                self.mock_connection.extend.standard.paged_search.return_value = iter([])
+
+                ad_conn.search('(objectClass=*)', search_scope=search_scope)
+
+                self.assertEqual(
+                    self.mock_connection.extend.standard.paged_search.call_args.kwargs[
+                        'search_scope'
+                    ],
+                    search_scope,
+                )
+
+    def test_invalid_search_options_fail_before_paged_search(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        invalid_options = [
+            ('search_base', {'search_base': ''}),
+            ('search_scope', {'search_scope': 'INVALID'}),
+            ('page_size', {'page_size': 0}),
+        ]
+
+        for option_name, options in invalid_options:
+            with self.subTest(option=option_name):
+                self.mock_connection.extend.standard.paged_search.reset_mock()
+
+                with self.assertRaisesRegex(ValueError, option_name):
+                    ad_conn.search('(objectClass=*)', **options)
+
+                self.mock_connection.extend.standard.paged_search.assert_not_called()
 
     def test_get_v2_with_results(self):
         ad_conn = ADConnection(self.servers, self.search_base)

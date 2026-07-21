@@ -29,6 +29,7 @@ from ldap3.core.exceptions import (
 )
 from ldap3.utils.dn import parse_dn
 
+from python_apis.apis.ad_config import ADTLSConfig
 from python_apis.models.ad_get import ADGetResult
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ AD_RECOVERABLE_READ_EXCEPTIONS = (
 _RECOVERABLE_EXCEPTIONS = AD_RECOVERABLE_READ_EXCEPTIONS
 _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
 _SUPPORTED_SEARCH_SCOPES = frozenset((BASE, LEVEL, SUBTREE))
+_LEGACY_LEAF_KEY_CIPHERS = "DEFAULT:@SECLEVEL=1"
 
 
 def _build_retry_policy(operation_kind: str, max_retries: int) -> dict[str, Any]:
@@ -231,6 +233,7 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         read_retry_count: int = 1,
         read_retry_backoff_seconds: float = 0,
         write_retry_count: int = 0,
+        tls: ADTLSConfig | None = None,
     ):
         self._validate_connection_options(
             receive_timeout=receive_timeout,
@@ -240,6 +243,9 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             read_retry_backoff_seconds=read_retry_backoff_seconds,
             write_retry_count=write_retry_count,
         )
+        if tls is not None and not isinstance(tls, ADTLSConfig):
+            raise TypeError("tls must be an ADTLSConfig or None")
+        self._validate_tls_runtime_config(tls)
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
 
@@ -255,6 +261,12 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         )
         self._last_retry_telemetry: RetryTelemetry | None = None
         self._selected_server: str | None = None
+        self._tls_config = tls
+        if tls is not None and tls.legacy_leaf_key_compatibility:
+            logger.warning(
+                "Legacy leaf-key compatibility is enabled; certificate and hostname "
+                "validation remain required."
+            )
         self.connection = self._get_connection(servers)
 
     @property
@@ -286,6 +298,11 @@ class ADConnection:  # pylint: disable=too-many-public-methods
     def write_retry_count(self) -> int:
         """Maximum retries for writes; disabled unless explicitly configured."""
         return self._options.write_retry_count
+
+    @property
+    def tls_config(self) -> ADTLSConfig | None:
+        """Explicit TLS settings, or ``None`` for historical default behavior."""
+        return self._tls_config
 
     @staticmethod
     def _validate_connection_options(  # pylint: disable=too-many-arguments
@@ -350,17 +367,92 @@ class ADConnection:  # pylint: disable=too-many-public-methods
 
         return self._last_retry_telemetry
 
+    @staticmethod
+    def _validate_tls_runtime_config(tls: ADTLSConfig | None) -> None:
+        """Preflight explicit trust and cipher settings without exposing values."""
+
+        if tls is None:
+            return
+
+        context = ssl.create_default_context()
+        ciphers = (
+            _LEGACY_LEAF_KEY_CIPHERS
+            if tls.legacy_leaf_key_compatibility
+            else tls.ciphers
+        )
+        try:
+            if ciphers is not None:
+                context.set_ciphers(ciphers)
+            if tls.ca_certs_file or tls.ca_certs_path or tls.ca_certs_data:
+                context.load_verify_locations(
+                    cafile=tls.ca_certs_file,
+                    capath=tls.ca_certs_path,
+                    cadata=tls.ca_certs_data,
+                )
+        except (OSError, ValueError, ssl.SSLError) as exc:
+            raise ValueError("Invalid TLS trust or cipher configuration") from exc
+
+    @staticmethod
+    def _secure_server_endpoint(server: str) -> tuple[str, int | None]:
+        """Return a host and optional port suitable for validated TLS."""
+
+        candidate = server.strip()
+        parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+        host = parsed.hostname
+        if not host:
+            raise ValueError("Configured server must include a valid host")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("Configured server must include a valid port") from exc
+        return host, port
+
+    @staticmethod
+    def _build_explicit_tls(tls: ADTLSConfig, server_host: str) -> Tls:
+        """Build a per-server ldap3 TLS object from validated explicit config."""
+
+        ciphers = (
+            _LEGACY_LEAF_KEY_CIPHERS
+            if tls.legacy_leaf_key_compatibility
+            else tls.ciphers
+        )
+        return Tls(
+            validate=tls.validate,
+            version=tls.version,
+            ssl_options=tls.ssl_options,
+            ca_certs_file=tls.ca_certs_file,
+            ca_certs_path=tls.ca_certs_path,
+            ca_certs_data=tls.ca_certs_data,
+            valid_names=tls.valid_names,
+            ciphers=ciphers,
+            sni=server_host,
+        )
+
     def _get_connection(self, servers: list[str]) -> Connection:
         """initializes a connection to the active directory.
         """
         if not servers:
             raise ADMissingServersError  # Explicitly handle empty server list
 
-        tls = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
-        server_options = {"use_ssl": True, "tls": tls}
-        if self.connect_timeout is not None:
-            server_options["connect_timeout"] = self.connect_timeout
-        ldap_servers = [Server(server, **server_options) for server in servers]
+        if self._tls_config is None:
+            tls = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+            server_options = {"use_ssl": True, "tls": tls}
+            if self.connect_timeout is not None:
+                server_options["connect_timeout"] = self.connect_timeout
+            ldap_servers = [Server(server, **server_options) for server in servers]
+        else:
+            ldap_servers = []
+            for server in servers:
+                server_host, server_port = self._secure_server_endpoint(server)
+                server_options = {
+                    "use_ssl": True,
+                    "tls": self._build_explicit_tls(self._tls_config, server_host),
+                }
+                if server_port is not None:
+                    server_options["port"] = server_port
+                if self.connect_timeout is not None:
+                    server_options["connect_timeout"] = self.connect_timeout
+                ldap_servers.append(Server(server_host, **server_options))
 
         server_pool = ServerPool(ldap_servers, ROUND_ROBIN, active=True, exhaust=True)
 

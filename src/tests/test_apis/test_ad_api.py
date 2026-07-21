@@ -19,6 +19,7 @@ from python_apis.apis.ad_api import (
     ADConnectionError,
     ADMissingServersError,
 )
+from python_apis.apis.ad_config import ADTLSConfig
 
 
 class TestADConnection(unittest.TestCase):
@@ -89,6 +90,121 @@ class TestADConnection(unittest.TestCase):
         self.assertNotIn('user', connection_options)
         self.assertNotIn('password', connection_options)
         self.mock_connection.bind.assert_called_once()
+
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    def test_secure_tls_is_per_server_and_validated(
+        self, mock_server_cls, _mock_server_pool_cls
+    ):
+        tls_objects = [MagicMock(name='tls-server1'), MagicMock(name='tls-server2')]
+        tls_config = ADTLSConfig.secure(
+            ca_certs_data="TEST_CA_DATA",
+            valid_names=("directory.example.test",),
+        )
+
+        with patch('python_apis.apis.ad_api.Tls', side_effect=tls_objects) as mock_tls, patch(
+            'python_apis.apis.ad_api.ssl.create_default_context'
+        ):
+            connection = ADConnection(
+                self.servers,
+                self.search_base,
+                connect_timeout=4,
+                tls=tls_config,
+            )
+
+        self.assertIs(connection.tls_config, tls_config)
+        self.assertEqual(mock_tls.call_count, 2)
+        self.assertEqual(
+            [tls_call.kwargs['sni'] for tls_call in mock_tls.call_args_list],
+            ['server1', 'server2'],
+        )
+        for tls_call in mock_tls.call_args_list:
+            self.assertEqual(tls_call.kwargs['validate'], ssl.CERT_REQUIRED)
+            self.assertIsNone(tls_call.kwargs['version'])
+            self.assertEqual(tls_call.kwargs['ca_certs_data'], "TEST_CA_DATA")
+            self.assertEqual(
+                tls_call.kwargs['valid_names'], ("directory.example.test",)
+            )
+        mock_server_cls.assert_has_calls([
+            call('server1', use_ssl=True, tls=tls_objects[0], connect_timeout=4),
+            call('server2', use_ssl=True, tls=tls_objects[1], connect_timeout=4),
+        ])
+
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    def test_secure_tls_preserves_explicit_server_port(
+        self, mock_server_cls, _mock_server_pool_cls
+    ):
+        with patch('python_apis.apis.ad_api.ssl.create_default_context'):
+            ADConnection(
+                ['ldaps://directory.example.test:1636'],
+                self.search_base,
+                tls=ADTLSConfig.secure(),
+            )
+
+        mock_server_cls.assert_called_once_with(
+            'directory.example.test',
+            use_ssl=True,
+            tls=ANY,
+            port=1636,
+        )
+
+    def test_invalid_explicit_tls_fails_before_ldap_construction(self):
+        context = MagicMock()
+        context.load_verify_locations.side_effect = ssl.SSLError('TLS_VALUE_CANARY')
+
+        with patch(
+            'python_apis.apis.ad_api.ssl.create_default_context', return_value=context
+        ), patch('python_apis.apis.ad_api.Server') as mock_server_cls, self.assertRaisesRegex(
+            ValueError, '^Invalid TLS trust or cipher configuration$'
+        ) as captured_error:
+            ADConnection(
+                self.servers,
+                self.search_base,
+                tls=ADTLSConfig.secure(ca_certs_data='INVALID_CA_CANARY'),
+            )
+
+        mock_server_cls.assert_not_called()
+        self.mock_connection_cls.assert_not_called()
+        self.assertNotIn('TLS_VALUE_CANARY', str(captured_error.exception))
+        self.assertNotIn('INVALID_CA_CANARY', str(captured_error.exception))
+
+    def test_legacy_leaf_key_mode_keeps_validation_and_warns_without_values(self):
+        context = MagicMock()
+        tls_config = ADTLSConfig.secure(legacy_leaf_key_compatibility=True)
+
+        with patch(
+            'python_apis.apis.ad_api.ssl.create_default_context', return_value=context
+        ), patch('python_apis.apis.ad_api.Tls') as mock_tls, patch(
+            'python_apis.apis.ad_api.Server'
+        ), patch('python_apis.apis.ad_api.ServerPool'), self.assertLogs(
+            'python_apis.apis.ad_api', level='WARNING'
+        ) as captured_logs:
+            ADConnection(self.servers, self.search_base, tls=tls_config)
+
+        context.set_ciphers.assert_called_once_with('DEFAULT:@SECLEVEL=1')
+        self.assertEqual(mock_tls.call_count, 2)
+        for tls_call in mock_tls.call_args_list:
+            self.assertEqual(tls_call.kwargs['validate'], ssl.CERT_REQUIRED)
+            self.assertEqual(tls_call.kwargs['ciphers'], 'DEFAULT:@SECLEVEL=1')
+        logs = '\n'.join(captured_logs.output)
+        self.assertIn('certificate and hostname validation remain required', logs)
+        self.assertNotIn('server1', logs)
+
+    def test_rebind_reuses_explicit_tls_config(self):
+        tls_config = ADTLSConfig.secure()
+        with patch('python_apis.apis.ad_api.ssl.create_default_context'), patch(
+            'python_apis.apis.ad_api.Tls'
+        ) as mock_tls, patch('python_apis.apis.ad_api.Server'), patch(
+            'python_apis.apis.ad_api.ServerPool'
+        ):
+            connection = ADConnection(self.servers, self.search_base, tls=tls_config)
+            mock_tls.reset_mock()
+
+            connection.rebind()
+
+        self.assertIs(connection.tls_config, tls_config)
+        self.assertEqual(mock_tls.call_count, 2)
 
     @patch('python_apis.apis.ad_api.ServerPool')
     @patch('python_apis.apis.ad_api.Server')

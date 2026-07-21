@@ -171,6 +171,32 @@ AD_CAPABILITIES: tuple[Capability, ...] = (
         ),
         example="examples/get_v2.py",
     ),
+    Capability(
+        name="secure-authorization-membership",
+        summary=(
+            "Explicit validated LDAPS and fail-closed transitive enabled-user "
+            "membership reads with distinct empty and missing-group outcomes."
+        ),
+        since_issue=54,
+        entry_points=(
+            "python_apis.apis:ADTLSConfig.secure",
+            "python_apis.apis:ADConnection.search_strict",
+            "python_apis.apis:escape_filter_value",
+            "python_apis.services:ADMembershipService.resolve_group_dn",
+            (
+                "python_apis.services:"
+                "ADMembershipService.get_transitive_enabled_group_members"
+            ),
+            "python_apis.models:ADGroupMembersResult",
+        ),
+        legacy="raw LDAP filters / application-specific AD connection wrapper",
+        migration=(
+            "Opt into ADTLSConfig.secure(...), then use ADMembershipService; "
+            "group_found=True with no members is valid empty, group_found=False "
+            "is missing, and operational failures raise safe typed exceptions."
+        ),
+        example="docs/ad-authorization-membership.md",
+    ),
 )
 
 

@@ -19,6 +19,7 @@ from python_apis.models.ad_responses import (
 )
 
 from python_apis.models.ad_get import ADGetResult
+from python_apis.models.ad_membership import ADGroupMembersResult
 
 from python_apis.models.multivalue import (
     ADMultiValue,
@@ -44,6 +45,7 @@ __all__ = [
     "ADBatchItemFailure",
     "ADBatchReadResult",
     "ADGetResult",
+    "ADGroupMembersResult",
 
     "ADMultiValue",
     "ADMultiValueMetadata",

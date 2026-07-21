@@ -2,7 +2,16 @@
 import unittest
 from unittest.mock import ANY, call, patch, MagicMock
 import ssl
-from ldap3 import BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, SUBTREE
+from ldap3 import (
+    BASE,
+    GSSAPI,
+    LEVEL,
+    MODIFY_ADD,
+    MODIFY_DELETE,
+    MODIFY_REPLACE,
+    SASL,
+    SUBTREE,
+)
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 from python_apis.apis.ad_api import (
     ADBindError,
@@ -74,6 +83,11 @@ class TestADConnection(unittest.TestCase):
         mock_tls.assert_called_once_with(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
         self.assertEqual(mock_server_cls.call_count, len(self.servers))
         mock_server_pool_cls.assert_called_once()
+        connection_options = self.mock_connection_cls.call_args.kwargs
+        self.assertEqual(connection_options['authentication'], SASL)
+        self.assertEqual(connection_options['sasl_mechanism'], GSSAPI)
+        self.assertNotIn('user', connection_options)
+        self.assertNotIn('password', connection_options)
         self.mock_connection.bind.assert_called_once()
 
     @patch('python_apis.apis.ad_api.ServerPool')
@@ -170,6 +184,18 @@ class TestADConnection(unittest.TestCase):
             paged_size=500,
             generator=True,
         )
+
+    def test_legacy_search_can_represent_rejected_result_as_empty(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection.result = {
+            'result': 50,
+            'description': 'insufficientAccessRights',
+        }
+
+        results = ad_conn.search('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertEqual(results, [])
 
     def test_search_extracts_ou_after_complete_escaped_rdn(self):
         ad_conn = ADConnection(self.servers, self.search_base)
@@ -446,6 +472,26 @@ class TestAutoReconnect(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['cn'], 'Jane Doe')
+
+    def test_retry_warning_omits_filter_exception_and_server_canaries(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        filter_canary = 'TASK0_FILTER_CANARY'
+        exception_canary = 'TASK0_EXCEPTION_CANARY'
+        self.mock_connection.extend.standard.paged_search.side_effect = [
+            LDAPCommunicationError(exception_canary),
+            iter([]),
+        ]
+
+        with patch.object(ad_conn, '_rebind_after_failure'), self.assertLogs(
+            'python_apis.apis.ad_api', level='WARNING'
+        ) as captured_logs:
+            ad_conn.search(f'(cn={filter_canary})', ['cn'])
+
+        logs = '\n'.join(captured_logs.output)
+        self.assertNotIn(filter_canary, logs)
+        self.assertNotIn(exception_canary, logs)
+        self.assertNotIn('server1', logs)
+        self.assertNotIn('server2', logs)
 
     def test_search_discards_partial_entries_before_retry(self):
         ad_conn = ADConnection(self.servers, self.search_base)

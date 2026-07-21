@@ -33,6 +33,7 @@ class ADOrganizationalUnitSchema(BaseModel):
     objectSid: Optional[str] = None
     managedBy: Optional[str] = None
     l: Optional[str] = None  # Location
+    street: Optional[str] = None
     streetAddress: Optional[str] = None
     postalCode: Optional[str] = None
     telephoneNumber: Optional[str] = None
@@ -80,27 +81,6 @@ class ADOrganizationalUnitSchema(BaseModel):
             return value.replace(tzinfo=None)
         return value
 
-    @field_validator('description', mode='before')
-    def parse_description(cls, value, _info: ValidationInfo):
-        """
-        Validator for the 'description' field.
-
-        - Converts the value to a str if it is a list.
-        - Takes out the character "-" if it has one. i.e. 21-420 -> 21420
-
-        Args:
-            value: The value to validate.
-            info: Validation information (unused).
-
-        Returns:
-            The processed str value.
-        """
-        if isinstance(value, list):
-            if not value:
-                return None
-            value = ','.join(map(str, value))
-        return value.replace('-', '')
-
     @property
     def ou_hierarchy(self) -> list[str]:
         """
@@ -109,7 +89,7 @@ class ADOrganizationalUnitSchema(BaseModel):
         Returns:
             list[str]: A list of OU names from the root to this OU.
         """
-        hierarchy = []
+        hierarchy: list[str] = []
         if self.distinguishedName:
             parts = self.distinguishedName.split(',')
             for part in parts:

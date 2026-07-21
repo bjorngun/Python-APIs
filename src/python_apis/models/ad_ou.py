@@ -44,11 +44,12 @@ Optional and ClassVar.
 """
 
 
-from typing import Optional, ClassVar
+from typing import Any, Optional, ClassVar
 from ldap3.core.exceptions import LDAPInvalidDnError
 from ldap3.utils.dn import parse_dn
 from sqlalchemy import Column, String
 from sqlalchemy.dialects.mssql import DATETIME2
+from sqlalchemy.orm import reconstructor
 
 from .base import Base
 
@@ -66,6 +67,7 @@ class ADOrganizationalUnit(Base):
     """Active Directory Organizational Unit model representing OU attributes in the database."""
 
     __tablename__ = 'ADOrganizationalUnit'
+    __allow_unmapped__ = True
 
     distinguishedName = Column(String(255), primary_key=True)
     name = Column(String(256))
@@ -78,14 +80,25 @@ class ADOrganizationalUnit(Base):
     objectSid = Column(String(256))
     managedBy = Column(String(256))
     l = Column(String(256))  # Location
+    street = Column(String(256))
     streetAddress = Column(String(256))
     postalCode = Column(String(256))
     telephoneNumber = Column(String(256))
 
     # Non-database field
     changes: ClassVar[Optional[str]] = None
-    children: ClassVar[Optional[list['ADOrganizationalUnit']]] = None
-    parent: ClassVar[Optional['ADOrganizationalUnit']] = None
+    children: list['ADOrganizationalUnit']
+    parent: Optional['ADOrganizationalUnit']
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._initialize_hierarchy()
+
+    @reconstructor
+    def _initialize_hierarchy(self) -> None:
+        """Initialize non-persistent hierarchy links for each model instance."""
+        self.children = []
+        self.parent = None
 
     def __repr__(self) -> str:
         """Return a string representation of the ADOrganizationalUnit instance."""
@@ -112,10 +125,7 @@ class ADOrganizationalUnit(Base):
         Returns:
             list[str]: A list of child OU names.
         """
-        if self.children is None:
-            raise NotSetException(variable_name="children")
-        self.children: list[ADOrganizationalUnit]
-        return [child.name for child in self.children]
+        return [str(child.name) for child in self.children if child.name is not None]
 
     def parse_distinguished_name(self) -> list[str]:
         """Parse the distinguished name into LDAP-aware RDN components.
@@ -177,5 +187,5 @@ class ADOrganizationalUnit(Base):
         return [
             'distinguishedName', 'name', 'ou', 'description', 'whenCreated',
             'whenChanged', 'objectClass', 'objectGUID', 'objectSid',
-            'managedBy', 'l', 'streetAddress', 'postalCode', 'telephoneNumber'
+            'managedBy', 'l', 'street', 'streetAddress', 'postalCode', 'telephoneNumber'
         ]

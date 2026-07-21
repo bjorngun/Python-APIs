@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import ANY, call, patch, MagicMock
 import ssl
+import traceback
 from ldap3 import (
     BASE,
     GSSAPI,
@@ -14,7 +15,9 @@ from ldap3 import (
     SUBTREE,
 )
 from ldap3.core.exceptions import (
+    LDAPCertificateError,
     LDAPCommunicationError,
+    LDAPException,
     LDAPInvalidFilterError,
     LDAPResponseTimeoutError,
     LDAPSessionTerminatedByServerError,
@@ -31,6 +34,7 @@ from python_apis.apis.ad_errors import (
     ADMalformedResultError,
     ADQueryRejectedError,
     ADTimeoutError,
+    ADTLSVerificationError,
     ADTransportError,
 )
 from python_apis.services.error_taxonomy import AD_PERMISSION_DENIED
@@ -134,6 +138,8 @@ class TestADConnection(unittest.TestCase):
         self.assertNotIn('SIMPLE_PASSWORD_CANARY', message)
         self.assertNotIn('PASSWORD_CANARY_INVALID', message)
         self.assertNotIn('RAW_SERVER_CANARY', message)
+        self.assertIsNone(self.mock_connection.user)
+        self.assertIsNone(self.mock_connection.password)
 
     def test_simple_bind_rebind_reuses_private_credentials(self):
         connection = ADConnection(
@@ -181,16 +187,70 @@ class TestADConnection(unittest.TestCase):
         self.assertNotIn('server1', str(context.exception))
         self.assertNotIn('Invalid credentials', str(context.exception))
 
-    def test_init_bind_exception_is_chained_to_safe_bind_error(self):
+    def test_init_bind_transport_exception_is_classified_and_suppressed(self):
         original_error = LDAPCommunicationError('raw controller detail')
         self.mock_connection.bind.side_effect = original_error
         self.mock_connection.server.host = 'server1'
 
-        with self.assertRaises(ADBindError) as context:
+        with self.assertRaises(ADTransportError) as context:
             ADConnection(self.servers, self.search_base)
 
-        self.assertIs(context.exception.__cause__, original_error)
-        self.assertNotIn('raw controller detail', str(context.exception))
+        self.assertIsNone(context.exception.__cause__)
+        formatted = ''.join(traceback.format_exception(context.exception))
+        self.assertNotIn('raw controller detail', formatted)
+        self.assertNotIn('server1', formatted)
+
+    def test_init_bind_timeout_is_classified_and_suppressed(self):
+        self.mock_connection.bind.side_effect = LDAPResponseTimeoutError(
+            'TIMEOUT_DETAIL_CANARY'
+        )
+        self.mock_connection.server.host = 'server1'
+
+        with self.assertRaises(ADTimeoutError) as context:
+            ADConnection(self.servers, self.search_base)
+
+        self.assertIsNone(context.exception.__cause__)
+        self.assertNotIn(
+            'TIMEOUT_DETAIL_CANARY',
+            ''.join(traceback.format_exception(context.exception)),
+        )
+
+    def test_init_bind_tls_failure_is_classified_and_suppressed(self):
+        self.mock_connection.bind.side_effect = LDAPCertificateError(
+            'CERTIFICATE_DETAIL_CANARY'
+        )
+        self.mock_connection.server.host = 'server1'
+
+        with self.assertRaises(ADTLSVerificationError) as context:
+            ADConnection(self.servers, self.search_base, tls=ADTLSConfig.secure())
+
+        self.assertIsNone(context.exception.__cause__)
+        formatted = ''.join(traceback.format_exception(context.exception))
+        self.assertNotIn('CERTIFICATE_DETAIL_CANARY', formatted)
+        self.assertNotIn('server1', formatted)
+
+    def test_simple_bind_generic_failure_scrubs_and_suppresses_credentials(self):
+        self.mock_connection.bind.side_effect = LDAPException(
+            'SIMPLE_USER_CANARY SIMPLE_PASSWORD_CANARY'
+        )
+        self.mock_connection.server.host = 'server1'
+
+        with self.assertRaises(ADBindError) as context:
+            ADConnection(
+                self.servers,
+                self.search_base,
+                authentication='simple',
+                username='SIMPLE_USER_CANARY',
+                password='SIMPLE_PASSWORD_CANARY',
+                tls=ADTLSConfig.secure(),
+            )
+
+        self.assertIsNone(context.exception.__cause__)
+        self.assertIsNone(self.mock_connection.user)
+        self.assertIsNone(self.mock_connection.password)
+        formatted = ''.join(traceback.format_exception(context.exception))
+        self.assertNotIn('SIMPLE_USER_CANARY', formatted)
+        self.assertNotIn('SIMPLE_PASSWORD_CANARY', formatted)
 
     @patch('python_apis.apis.ad_api.ServerPool')
     @patch('python_apis.apis.ad_api.Server')
@@ -491,6 +551,11 @@ class TestADConnection(unittest.TestCase):
             ad_conn.search_strict('(cn=FILTER_CANARY', ['sAMAccountName'])
 
         self.assertNotIn('FILTER_CANARY', str(captured_error.exception))
+        self.assertIsNone(captured_error.exception.__cause__)
+        self.assertNotIn(
+            'FILTER_CANARY',
+            ''.join(traceback.format_exception(captured_error.exception)),
+        )
 
     def test_strict_search_retries_recoverable_failure_once(self):
         ad_conn = ADConnection(self.servers, self.search_base)
@@ -522,6 +587,11 @@ class TestADConnection(unittest.TestCase):
         self.assertNotIn('TRANSPORT_CANARY', str(captured_error.exception))
         self.assertNotIn('FILTER_CANARY', str(captured_error.exception))
         self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 1)
+        self.assertIsNone(captured_error.exception.__cause__)
+        self.assertNotIn(
+            'TRANSPORT_CANARY',
+            ''.join(traceback.format_exception(captured_error.exception)),
+        )
 
     def test_strict_search_wraps_timeout_without_retry(self):
         ad_conn = ADConnection(self.servers, self.search_base)
@@ -536,6 +606,11 @@ class TestADConnection(unittest.TestCase):
 
         mock_rebind.assert_not_called()
         self.assertNotIn('TIMEOUT_CANARY', str(captured_error.exception))
+        self.assertIsNone(captured_error.exception.__cause__)
+        self.assertNotIn(
+            'TIMEOUT_CANARY',
+            ''.join(traceback.format_exception(captured_error.exception)),
+        )
 
     def test_search_extracts_ou_after_complete_escaped_rdn(self):
         ad_conn = ADConnection(self.servers, self.search_base)

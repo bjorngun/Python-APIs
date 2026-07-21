@@ -164,9 +164,10 @@ except ADBindError as error:
     report_bind_failure(error.result_code, error.controller)
 ```
 
-`ADBindError` contains an LDAP result code when available and a masked controller token. If
-`ldap3` raises during bind, the original exception is preserved as `__cause__`; its text is not
-copied into the safe public message.
+`ADBindError` contains an LDAP result code when available and a masked controller token. Raised
+bind failures are classified as authentication, timeout, transport, or TLS verification errors.
+Their raw exception context is suppressed so formatted tracebacks cannot expose credentials,
+controller details, certificate diagnostics, or connection state.
 
 Normal retry logs include operation, exception type, attempt number, and masked controller token.
 Do not add credentials, complete records, raw user DNs, or raw controller names to consumer logs.

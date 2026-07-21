@@ -1,6 +1,7 @@
 """Security-hygiene tests for reusable Active Directory connections and reads."""
 
 import ssl
+import traceback
 import unittest
 from unittest.mock import MagicMock, call, patch
 
@@ -120,6 +121,10 @@ class TestADSecurityHygiene(unittest.TestCase):
             )
 
         self.assert_no_sensitive_values(captured_error.exception)
+        self.assertIsNone(captured_error.exception.__cause__)
+        self.assert_no_sensitive_values(
+            ''.join(traceback.format_exception(captured_error.exception))
+        )
 
     def test_legacy_leaf_key_warning_is_value_free_and_validation_specific(self):
         context = MagicMock()

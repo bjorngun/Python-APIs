@@ -61,6 +61,7 @@ from python_apis.apis.ad_errors import (
     ADSearchError,
     ADTimeoutError,
     ADTLSConfigurationError,
+    ADTLSVerificationError,
     ADTransportError,
 )
 from python_apis.apis.jira_api import JiraConnection
@@ -84,6 +85,7 @@ __all__ = [
     "ADTimeoutError",
     "ADTLSConfig",
     "ADTLSConfigurationError",
+    "ADTLSVerificationError",
     "ADTransportError",
     "RetryTelemetry",
     "escape_filter_value",

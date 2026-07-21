@@ -66,6 +66,17 @@ class ADTLSConfigurationError(ADConfigurationError):
         super().__init__("Invalid TLS trust or cipher configuration")
 
 
+class ADTLSVerificationError(ADConnectionError):
+    """Raised when a server certificate or TLS handshake cannot be verified."""
+
+    def __init__(self, controller: str = "controller-unknown") -> None:
+        self.controller = controller
+        super().__init__(
+            "Active Directory TLS verification failed "
+            f"(controller={controller})"
+        )
+
+
 class ADMissingServersError(ADConfigurationError):
     """Raised when an AD connection is created without servers."""
 
@@ -175,6 +186,7 @@ __all__ = [
     "ADSearchError",
     "ADTimeoutError",
     "ADTLSConfigurationError",
+    "ADTLSVerificationError",
     "ADTransportError",
     "classify_ldap_result_code",
 ]

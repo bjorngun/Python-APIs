@@ -17,7 +17,7 @@ import ssl
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
 
 from ldap3.utils.log import (
@@ -29,11 +29,13 @@ from ldap3 import (ALL_ATTRIBUTES, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE,
                    MODIFY_REPLACE, ROUND_ROBIN, SASL, SIMPLE, SUBTREE, GSSAPI,
                    Connection, Server, ServerPool, Tls)
 from ldap3.core.exceptions import (
+    LDAPCertificateError,
     LDAPCommunicationError,
     LDAPException,
     LDAPInvalidDnError,
     LDAPInvalidFilterError,
     LDAPResponseTimeoutError,
+    LDAPSSLConfigurationError,
     LDAPSessionTerminatedByServerError,
 )
 from ldap3.utils.dn import parse_dn
@@ -49,6 +51,7 @@ from python_apis.apis.ad_errors import (  # pylint: disable=unused-import
     ADQueryRejectedError,
     ADTimeoutError,
     ADTLSConfigurationError,
+    ADTLSVerificationError,
     ADTransportError,
     classify_ldap_result_code,
 )
@@ -223,18 +226,18 @@ def _normalize_strict_read_errors(method):
     def wrapper(self, *args, **kwargs):
         try:
             return method(self, *args, **kwargs)
-        except LDAPResponseTimeoutError as exc:
+        except LDAPResponseTimeoutError:
             controller = self._mask_server_identifier(  # pylint: disable=protected-access
                 self._selected_server  # pylint: disable=protected-access
             )
-            raise ADTimeoutError(controller) from exc
-        except _RECOVERABLE_EXCEPTIONS as exc:
+            raise ADTimeoutError(controller) from None
+        except _RECOVERABLE_EXCEPTIONS:
             controller = self._mask_server_identifier(  # pylint: disable=protected-access
                 self._selected_server  # pylint: disable=protected-access
             )
-            raise ADTransportError(controller) from exc
-        except (LDAPInvalidFilterError, LDAPInvalidDnError, ValueError) as exc:
-            raise ADMalformedQueryError() from exc
+            raise ADTransportError(controller) from None
+        except (LDAPInvalidFilterError, LDAPInvalidDnError, ValueError):
+            raise ADMalformedQueryError() from None
 
     return wrapper
 
@@ -457,8 +460,8 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
                     capath=tls.ca_certs_path,
                     cadata=tls.ca_certs_data,
                 )
-        except (OSError, ValueError, ssl.SSLError) as exc:
-            raise ADTLSConfigurationError() from exc
+        except (OSError, ValueError, ssl.SSLError):
+            raise ADTLSConfigurationError() from None
 
     @staticmethod
     def _validate_authentication_options(
@@ -489,6 +492,29 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
 
         connection.user = None
         connection.password = None
+
+    def _raise_safe_bind_error(
+        self,
+        connection: Connection,
+        exception: BaseException,
+    ) -> NoReturn:
+        """Classify a bind failure without exposing the raw exception context."""
+
+        controller = self._mask_server_identifier(
+            self._bound_server_identifier(connection)
+        )
+        if self._authentication == "simple":
+            self._scrub_bound_simple_credentials(connection)
+        if isinstance(exception, (LDAPResponseTimeoutError, TimeoutError)):
+            raise ADTimeoutError(controller) from None
+        if isinstance(
+            exception,
+            (LDAPCertificateError, LDAPSSLConfigurationError, ssl.SSLError),
+        ):
+            raise ADTLSVerificationError(controller) from None
+        if isinstance(exception, (*_RECOVERABLE_EXCEPTIONS, OSError)):
+            raise ADTransportError(controller) from None
+        raise ADBindError(None, controller) from None
 
     @staticmethod
     def _secure_server_endpoint(server: str) -> tuple[str, int | None]:
@@ -526,7 +552,7 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
             sni=server_host,
         )
 
-    def _get_connection(self, servers: list[str]) -> Connection:  # pylint: disable=too-many-locals
+    def _get_connection(self, servers: list[str]) -> Connection:  # pylint: disable=too-many-branches,too-many-locals
         """initializes a connection to the active directory.
         """
         if not servers:
@@ -572,17 +598,16 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
         connection = Connection(server_pool, **connection_options)
         try:
             bound = connection.bind()
-        except LDAPException as exc:
-            controller = self._mask_server_identifier(
-                self._bound_server_identifier(connection)
-            )
-            raise ADBindError(None, controller) from exc
+        except (LDAPException, OSError) as exc:
+            self._raise_safe_bind_error(connection, exc)
         if not bound:
             result = connection.result if isinstance(connection.result, dict) else {}
             result_code = result.get("result")
             controller = self._mask_server_identifier(
                 self._bound_server_identifier(connection)
             )
+            if self._authentication == "simple":
+                self._scrub_bound_simple_credentials(connection)
             raise ADBindError(result_code, controller)
         if self._authentication == "simple":
             self._scrub_bound_simple_credentials(connection)

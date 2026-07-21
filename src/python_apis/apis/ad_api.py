@@ -37,6 +37,7 @@ from ldap3.core.exceptions import (
     LDAPSessionTerminatedByServerError,
 )
 from ldap3.utils.dn import parse_dn
+from ldap3.utils.conv import escape_filter_chars
 
 from python_apis.apis.ad_config import ADAuthenticationMode, ADTLSConfig
 from python_apis.apis.ad_errors import (  # pylint: disable=unused-import
@@ -63,6 +64,14 @@ _RECOVERABLE_EXCEPTIONS = AD_RECOVERABLE_READ_EXCEPTIONS
 _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
 _SUPPORTED_SEARCH_SCOPES = frozenset((BASE, LEVEL, SUBTREE))
 _LEGACY_LEAF_KEY_CIPHERS = "DEFAULT:@SECLEVEL=1"
+
+
+def escape_filter_value(value: str) -> str:
+    """Escape one caller-provided value for safe LDAP filter interpolation."""
+
+    if not isinstance(value, str):
+        raise TypeError("LDAP filter value must be a string")
+    return escape_filter_chars(value)
 
 
 def _build_retry_policy(operation_kind: str, max_retries: int) -> dict[str, Any]:

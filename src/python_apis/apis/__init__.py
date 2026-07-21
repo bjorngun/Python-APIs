@@ -47,6 +47,7 @@ from python_apis.apis.ad_api import (
     AD_READ_RETRY_POLICY,
     AD_WRITE_RETRY_POLICY,
     RetryTelemetry,
+    escape_filter_value,
 )
 from python_apis.apis.ad_errors import (
     ADBindError,
@@ -85,6 +86,7 @@ __all__ = [
     "ADTLSConfigurationError",
     "ADTransportError",
     "RetryTelemetry",
+    "escape_filter_value",
     "JiraConnection",
     "SQLConnection",
 ]

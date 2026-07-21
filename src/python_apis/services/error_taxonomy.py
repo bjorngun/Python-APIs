@@ -32,6 +32,8 @@ Any exception or non-success result state that is not explicitly mapped resolves
 to :data:`AD_UNKNOWN`, so the taxonomy is always total over failure inputs.
 """
 
+# pylint: disable=duplicate-code
+
 from collections.abc import Mapping
 from typing import Final
 
@@ -116,6 +118,9 @@ def map_exception_to_error_code(exception: BaseException | None) -> str:
 
     if exception is None:
         return AD_UNKNOWN
+    explicit_code = getattr(exception, "error_code", None)
+    if explicit_code in AD_ERROR_CODES:
+        return explicit_code
     for klass in type(exception).__mro__:
         code = _EXCEPTION_NAME_TO_CODE.get(klass.__name__)
         if code is not None:

@@ -7,6 +7,7 @@ module or a few of them.
 # pylint: disable=duplicate-code
 
 from python_apis.services.ad_group_service import ADGroupService
+from python_apis.services.ad_membership_service import ADMembershipService
 from python_apis.services.ad_user_service import ADUserService
 from python_apis.services.ad_ou_service import (
     ADOrganizationalUnitService,
@@ -20,6 +21,7 @@ from python_apis.services.ou_inheritance import (
 
 __all__ = [
     "ADGroupService",
+    "ADMembershipService",
     "ADUserService",
     "ADOrganizationalUnitService",
     "ADOrganizationalUnitTreeError",

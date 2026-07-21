@@ -2,14 +2,42 @@
 import unittest
 from unittest.mock import ANY, call, patch, MagicMock
 import ssl
-from ldap3 import BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, SUBTREE
-from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
+import traceback
+from ldap3 import (
+    BASE,
+    GSSAPI,
+    LEVEL,
+    MODIFY_ADD,
+    MODIFY_DELETE,
+    MODIFY_REPLACE,
+    SASL,
+    SIMPLE,
+    SUBTREE,
+)
+from ldap3.core.exceptions import (
+    LDAPCertificateError,
+    LDAPCommunicationError,
+    LDAPException,
+    LDAPInvalidFilterError,
+    LDAPResponseTimeoutError,
+    LDAPSessionTerminatedByServerError,
+)
 from python_apis.apis.ad_api import (
     ADBindError,
     ADConnection,
     ADConnectionError,
     ADMissingServersError,
 )
+from python_apis.apis.ad_config import ADTLSConfig
+from python_apis.apis.ad_errors import (
+    ADMalformedQueryError,
+    ADMalformedResultError,
+    ADQueryRejectedError,
+    ADTimeoutError,
+    ADTLSVerificationError,
+    ADTransportError,
+)
+from python_apis.services.error_taxonomy import AD_PERMISSION_DENIED
 
 
 class TestADConnection(unittest.TestCase):
@@ -36,6 +64,112 @@ class TestADConnection(unittest.TestCase):
         self.assertEqual(conn.search_base, self.search_base)
         self.assertIsNotNone(conn.connection)
 
+    def test_invalid_authentication_fails_before_ldap_construction(self):
+        invalid_options = (
+            {"authentication": "unknown"},
+            {"authentication": "gssapi", "username": "USER_CANARY"},
+            {"authentication": "gssapi", "password": "PASSWORD_CANARY"},
+            {"authentication": "simple", "username": "", "password": "secret"},
+            {"authentication": "simple", "username": "user", "password": ""},
+            {"authentication": "simple", "username": "user", "password": "secret"},
+            {
+                "authentication": "simple",
+                "username": "user",
+                "password": "secret",
+                "tls": ADTLSConfig(validate=ssl.CERT_NONE),
+            },
+        )
+
+        for options in invalid_options:
+            with self.subTest(options=options), patch(
+                'python_apis.apis.ad_api.Server'
+            ) as mock_server_cls, self.assertRaises(ValueError):
+                ADConnection(self.servers, self.search_base, **options)
+
+            mock_server_cls.assert_not_called()
+            self.mock_connection_cls.assert_not_called()
+
+    def test_simple_bind_uses_credentials_and_scrubs_bound_connection(self):
+        username = 'SIMPLE_USER_CANARY'
+        password = 'SIMPLE_PASSWORD_CANARY'
+
+        connection = ADConnection(
+            self.servers,
+            self.search_base,
+            authentication='simple',
+            username=username,
+            password=password,
+            tls=ADTLSConfig.secure(),
+        )
+
+        connection_options = self.mock_connection_cls.call_args.kwargs
+        self.assertEqual(connection_options['authentication'], SIMPLE)
+        self.assertEqual(connection_options['user'], username)
+        self.assertEqual(connection_options['password'], password)
+        self.assertFalse(connection_options['auto_referrals'])
+        self.assertIsNone(self.mock_connection.user)
+        self.assertIsNone(self.mock_connection.password)
+        self.assertEqual(connection.authentication_mode, 'simple')
+        self.assertNotIn(username, repr(connection))
+        self.assertNotIn(password, repr(connection))
+        self.assertNotIn(username, repr(connection.connection))
+        self.assertNotIn(password, repr(connection.connection))
+
+    def test_simple_bind_failure_uses_safe_error(self):
+        self.mock_connection.bind.return_value = False
+        self.mock_connection.result = {
+            'result': 49,
+            'description': 'PASSWORD_CANARY_INVALID',
+        }
+        self.mock_connection.server.host = 'RAW_SERVER_CANARY'
+
+        with self.assertRaises(ADBindError) as captured_error:
+            ADConnection(
+                self.servers,
+                self.search_base,
+                authentication='simple',
+                username='SIMPLE_USER_CANARY',
+                password='SIMPLE_PASSWORD_CANARY',
+                tls=ADTLSConfig.secure(),
+            )
+
+        message = str(captured_error.exception)
+        self.assertNotIn('SIMPLE_USER_CANARY', message)
+        self.assertNotIn('SIMPLE_PASSWORD_CANARY', message)
+        self.assertNotIn('PASSWORD_CANARY_INVALID', message)
+        self.assertNotIn('RAW_SERVER_CANARY', message)
+        self.assertIsNone(self.mock_connection.user)
+        self.assertIsNone(self.mock_connection.password)
+
+    def test_simple_bind_rebind_reuses_private_credentials(self):
+        connection = ADConnection(
+            self.servers,
+            self.search_base,
+            authentication='simple',
+            username='SIMPLE_USER_CANARY',
+            password='SIMPLE_PASSWORD_CANARY',
+            tls=ADTLSConfig.secure(),
+        )
+        self.mock_connection_cls.reset_mock()
+
+        connection.rebind()
+
+        connection_options = self.mock_connection_cls.call_args.kwargs
+        self.assertEqual(connection_options['user'], 'SIMPLE_USER_CANARY')
+        self.assertEqual(connection_options['password'], 'SIMPLE_PASSWORD_CANARY')
+        self.assertIsNone(connection.connection.user)
+        self.assertIsNone(connection.connection.password)
+
+    @patch('python_apis.apis.ad_api.set_library_log_detail_level')
+    @patch('python_apis.apis.ad_api.set_library_log_hide_sensitive_data')
+    def test_opt_in_ldap_logging_forces_sensitive_data_hiding(
+        self, mock_hide_sensitive, mock_detail_level
+    ):
+        ADConnection(self.servers, self.search_base, enable_ldap_logging=True)
+
+        mock_hide_sensitive.assert_called_once_with(True)
+        mock_detail_level.assert_called_once_with(ANY)
+
     def test_init_no_servers_raises_exception(self):
         with self.assertRaises(ADMissingServersError):
             ADConnection([], self.search_base)
@@ -53,16 +187,70 @@ class TestADConnection(unittest.TestCase):
         self.assertNotIn('server1', str(context.exception))
         self.assertNotIn('Invalid credentials', str(context.exception))
 
-    def test_init_bind_exception_is_chained_to_safe_bind_error(self):
+    def test_init_bind_transport_exception_is_classified_and_suppressed(self):
         original_error = LDAPCommunicationError('raw controller detail')
         self.mock_connection.bind.side_effect = original_error
         self.mock_connection.server.host = 'server1'
 
-        with self.assertRaises(ADBindError) as context:
+        with self.assertRaises(ADTransportError) as context:
             ADConnection(self.servers, self.search_base)
 
-        self.assertIs(context.exception.__cause__, original_error)
-        self.assertNotIn('raw controller detail', str(context.exception))
+        self.assertIsNone(context.exception.__cause__)
+        formatted = ''.join(traceback.format_exception(context.exception))
+        self.assertNotIn('raw controller detail', formatted)
+        self.assertNotIn('server1', formatted)
+
+    def test_init_bind_timeout_is_classified_and_suppressed(self):
+        self.mock_connection.bind.side_effect = LDAPResponseTimeoutError(
+            'TIMEOUT_DETAIL_CANARY'
+        )
+        self.mock_connection.server.host = 'server1'
+
+        with self.assertRaises(ADTimeoutError) as context:
+            ADConnection(self.servers, self.search_base)
+
+        self.assertIsNone(context.exception.__cause__)
+        self.assertNotIn(
+            'TIMEOUT_DETAIL_CANARY',
+            ''.join(traceback.format_exception(context.exception)),
+        )
+
+    def test_init_bind_tls_failure_is_classified_and_suppressed(self):
+        self.mock_connection.bind.side_effect = LDAPCertificateError(
+            'CERTIFICATE_DETAIL_CANARY'
+        )
+        self.mock_connection.server.host = 'server1'
+
+        with self.assertRaises(ADTLSVerificationError) as context:
+            ADConnection(self.servers, self.search_base, tls=ADTLSConfig.secure())
+
+        self.assertIsNone(context.exception.__cause__)
+        formatted = ''.join(traceback.format_exception(context.exception))
+        self.assertNotIn('CERTIFICATE_DETAIL_CANARY', formatted)
+        self.assertNotIn('server1', formatted)
+
+    def test_simple_bind_generic_failure_scrubs_and_suppresses_credentials(self):
+        self.mock_connection.bind.side_effect = LDAPException(
+            'SIMPLE_USER_CANARY SIMPLE_PASSWORD_CANARY'
+        )
+        self.mock_connection.server.host = 'server1'
+
+        with self.assertRaises(ADBindError) as context:
+            ADConnection(
+                self.servers,
+                self.search_base,
+                authentication='simple',
+                username='SIMPLE_USER_CANARY',
+                password='SIMPLE_PASSWORD_CANARY',
+                tls=ADTLSConfig.secure(),
+            )
+
+        self.assertIsNone(context.exception.__cause__)
+        self.assertIsNone(self.mock_connection.user)
+        self.assertIsNone(self.mock_connection.password)
+        formatted = ''.join(traceback.format_exception(context.exception))
+        self.assertNotIn('SIMPLE_USER_CANARY', formatted)
+        self.assertNotIn('SIMPLE_PASSWORD_CANARY', formatted)
 
     @patch('python_apis.apis.ad_api.ServerPool')
     @patch('python_apis.apis.ad_api.Server')
@@ -74,7 +262,127 @@ class TestADConnection(unittest.TestCase):
         mock_tls.assert_called_once_with(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
         self.assertEqual(mock_server_cls.call_count, len(self.servers))
         mock_server_pool_cls.assert_called_once()
+        connection_options = self.mock_connection_cls.call_args.kwargs
+        self.assertEqual(connection_options['authentication'], SASL)
+        self.assertEqual(connection_options['sasl_mechanism'], GSSAPI)
+        self.assertNotIn('user', connection_options)
+        self.assertNotIn('password', connection_options)
         self.mock_connection.bind.assert_called_once()
+
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    def test_secure_tls_is_per_server_and_validated(
+        self, mock_server_cls, _mock_server_pool_cls
+    ):
+        tls_objects = [MagicMock(name='tls-server1'), MagicMock(name='tls-server2')]
+        tls_config = ADTLSConfig.secure(
+            ca_certs_data="TEST_CA_DATA",
+            valid_names=("directory.example.test",),
+        )
+
+        with patch('python_apis.apis.ad_api.Tls', side_effect=tls_objects) as mock_tls, patch(
+            'python_apis.apis.ad_api.ssl.create_default_context'
+        ):
+            connection = ADConnection(
+                self.servers,
+                self.search_base,
+                connect_timeout=4,
+                tls=tls_config,
+            )
+
+        self.assertIs(connection.tls_config, tls_config)
+        self.assertEqual(mock_tls.call_count, 2)
+        self.assertEqual(
+            [tls_call.kwargs['sni'] for tls_call in mock_tls.call_args_list],
+            ['server1', 'server2'],
+        )
+        for tls_call in mock_tls.call_args_list:
+            self.assertEqual(tls_call.kwargs['validate'], ssl.CERT_REQUIRED)
+            self.assertIsNone(tls_call.kwargs['version'])
+            self.assertEqual(tls_call.kwargs['ca_certs_data'], "TEST_CA_DATA")
+            self.assertEqual(
+                tls_call.kwargs['valid_names'], ("directory.example.test",)
+            )
+        mock_server_cls.assert_has_calls([
+            call('server1', use_ssl=True, tls=tls_objects[0], connect_timeout=4),
+            call('server2', use_ssl=True, tls=tls_objects[1], connect_timeout=4),
+        ])
+
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    def test_secure_tls_preserves_explicit_server_port(
+        self, mock_server_cls, _mock_server_pool_cls
+    ):
+        with patch('python_apis.apis.ad_api.ssl.create_default_context'):
+            ADConnection(
+                ['ldaps://directory.example.test:1636'],
+                self.search_base,
+                tls=ADTLSConfig.secure(),
+            )
+
+        mock_server_cls.assert_called_once_with(
+            'directory.example.test',
+            use_ssl=True,
+            tls=ANY,
+            port=1636,
+        )
+
+    def test_invalid_explicit_tls_fails_before_ldap_construction(self):
+        context = MagicMock()
+        context.load_verify_locations.side_effect = ssl.SSLError('TLS_VALUE_CANARY')
+
+        with patch(
+            'python_apis.apis.ad_api.ssl.create_default_context', return_value=context
+        ), patch('python_apis.apis.ad_api.Server') as mock_server_cls, self.assertRaisesRegex(
+            ValueError, '^Invalid TLS trust or cipher configuration$'
+        ) as captured_error:
+            ADConnection(
+                self.servers,
+                self.search_base,
+                tls=ADTLSConfig.secure(ca_certs_data='INVALID_CA_CANARY'),
+            )
+
+        mock_server_cls.assert_not_called()
+        self.mock_connection_cls.assert_not_called()
+        self.assertNotIn('TLS_VALUE_CANARY', str(captured_error.exception))
+        self.assertNotIn('INVALID_CA_CANARY', str(captured_error.exception))
+
+    def test_legacy_leaf_key_mode_keeps_validation_and_warns_without_values(self):
+        context = MagicMock()
+        tls_config = ADTLSConfig.secure(legacy_leaf_key_compatibility=True)
+
+        with patch(
+            'python_apis.apis.ad_api.ssl.create_default_context', return_value=context
+        ), patch('python_apis.apis.ad_api.Tls') as mock_tls, patch(
+            'python_apis.apis.ad_api.Server'
+        ), patch('python_apis.apis.ad_api.ServerPool'), self.assertLogs(
+            'python_apis.apis.ad_api', level='WARNING'
+        ) as captured_logs:
+            ADConnection(self.servers, self.search_base, tls=tls_config)
+
+        context.set_ciphers.assert_called_once_with('DEFAULT:@SECLEVEL=1')
+        self.assertEqual(mock_tls.call_count, 2)
+        for tls_call in mock_tls.call_args_list:
+            self.assertEqual(tls_call.kwargs['validate'], ssl.CERT_REQUIRED)
+            self.assertEqual(tls_call.kwargs['ciphers'], 'DEFAULT:@SECLEVEL=1')
+        logs = '\n'.join(captured_logs.output)
+        self.assertIn('certificate and hostname validation remain required', logs)
+        self.assertNotIn('server1', logs)
+
+    def test_rebind_reuses_explicit_tls_config(self):
+        tls_config = ADTLSConfig.secure()
+        with patch('python_apis.apis.ad_api.ssl.create_default_context'), patch(
+            'python_apis.apis.ad_api.Tls'
+        ) as mock_tls, patch('python_apis.apis.ad_api.Server'), patch(
+            'python_apis.apis.ad_api.ServerPool'
+        ):
+            connection = ADConnection(self.servers, self.search_base, tls=tls_config)
+            mock_tls.reset_mock()
+
+            connection.rebind()
+
+        self.assertIs(connection.tls_config, tls_config)
+        self.assertEqual(mock_tls.call_count, 2)
 
     @patch('python_apis.apis.ad_api.ServerPool')
     @patch('python_apis.apis.ad_api.Server')
@@ -169,6 +477,139 @@ class TestADConnection(unittest.TestCase):
             attributes=['cn', 'mail'],
             paged_size=500,
             generator=True,
+        )
+
+    def test_legacy_search_can_represent_rejected_result_as_empty(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection.result = {
+            'result': 50,
+            'description': 'insufficientAccessRights',
+        }
+
+        results = ad_conn.search('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertEqual(results, [])
+
+    def test_strict_search_distinguishes_successful_empty_result(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection.result = {'result': 0, 'description': 'success'}
+
+        results = ad_conn.search_strict('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertEqual(results, [])
+
+    def test_strict_search_raises_for_rejected_empty_result(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection.result = {
+            'result': 50,
+            'description': 'LDAP_DIAGNOSTIC_CANARY',
+        }
+
+        with self.assertRaises(ADQueryRejectedError) as captured_error:
+            ad_conn.search_strict('(cn=FILTER_CANARY)', ['sAMAccountName'])
+
+        error = captured_error.exception
+        self.assertEqual(error.error_code, AD_PERMISSION_DENIED)
+        self.assertEqual(error.result_code, 50)
+        self.assertNotIn('FILTER_CANARY', str(error))
+        self.assertNotIn('LDAP_DIAGNOSTIC_CANARY', str(error))
+
+    def test_strict_search_discards_partial_rejected_page(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        def rejected_page():
+            yield {'attributes': {'sAMAccountName': 'PARTIAL_MEMBER_CANARY'}}
+            self.mock_connection.result = {'result': 50}
+
+        self.mock_connection.extend.standard.paged_search.return_value = rejected_page()
+
+        with self.assertRaises(ADQueryRejectedError) as captured_error:
+            ad_conn.search_strict('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertNotIn('PARTIAL_MEMBER_CANARY', str(captured_error.exception))
+
+    def test_strict_search_rejects_malformed_result(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([])
+        self.mock_connection.result = {'description': 'MALFORMED_RESULT_CANARY'}
+
+        with self.assertRaises(ADMalformedResultError) as captured_error:
+            ad_conn.search_strict('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertNotIn('MALFORMED_RESULT_CANARY', str(captured_error.exception))
+
+    def test_strict_search_wraps_malformed_filter_safely(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = LDAPInvalidFilterError(
+            'FILTER_CANARY'
+        )
+
+        with self.assertRaises(ADMalformedQueryError) as captured_error:
+            ad_conn.search_strict('(cn=FILTER_CANARY', ['sAMAccountName'])
+
+        self.assertNotIn('FILTER_CANARY', str(captured_error.exception))
+        self.assertIsNone(captured_error.exception.__cause__)
+        self.assertNotIn(
+            'FILTER_CANARY',
+            ''.join(traceback.format_exception(captured_error.exception)),
+        )
+
+    def test_strict_search_retries_recoverable_failure_once(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = [
+            LDAPCommunicationError('TRANSPORT_CANARY'),
+            iter([{'attributes': {'sAMAccountName': 'user1'}}]),
+        ]
+        self.mock_connection.result = {'result': 0}
+
+        with patch.object(ad_conn, '_rebind_after_failure') as mock_rebind:
+            results = ad_conn.search_strict('(objectClass=user)', ['sAMAccountName'])
+
+        self.assertEqual(results, [{'sAMAccountName': 'user1'}])
+        mock_rebind.assert_called_once()
+        self.assertEqual(ad_conn.last_retry_telemetry.operation_name, 'search_strict')
+        self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 1)
+
+    def test_strict_search_wraps_exhausted_transport_safely(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = LDAPCommunicationError(
+            'TRANSPORT_CANARY'
+        )
+
+        with patch.object(ad_conn, '_rebind_after_failure'), self.assertRaises(
+            ADTransportError
+        ) as captured_error:
+            ad_conn.search_strict('(cn=FILTER_CANARY)', ['sAMAccountName'])
+
+        self.assertNotIn('TRANSPORT_CANARY', str(captured_error.exception))
+        self.assertNotIn('FILTER_CANARY', str(captured_error.exception))
+        self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 1)
+        self.assertIsNone(captured_error.exception.__cause__)
+        self.assertNotIn(
+            'TRANSPORT_CANARY',
+            ''.join(traceback.format_exception(captured_error.exception)),
+        )
+
+    def test_strict_search_wraps_timeout_without_retry(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.side_effect = LDAPResponseTimeoutError(
+            'TIMEOUT_CANARY'
+        )
+
+        with patch.object(ad_conn, '_rebind_after_failure') as mock_rebind, self.assertRaises(
+            ADTimeoutError
+        ) as captured_error:
+            ad_conn.search_strict('(cn=FILTER_CANARY)', ['sAMAccountName'])
+
+        mock_rebind.assert_not_called()
+        self.assertNotIn('TIMEOUT_CANARY', str(captured_error.exception))
+        self.assertIsNone(captured_error.exception.__cause__)
+        self.assertNotIn(
+            'TIMEOUT_CANARY',
+            ''.join(traceback.format_exception(captured_error.exception)),
         )
 
     def test_search_extracts_ou_after_complete_escaped_rdn(self):
@@ -432,6 +873,64 @@ class TestAutoReconnect(unittest.TestCase):
 
         self.assertIsNotNone(ad_conn.connection)
 
+    def test_close_is_idempotent(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        ad_conn.close()
+        ad_conn.close()
+
+        self.mock_connection.unbind.assert_called_once_with()
+
+    def test_context_manager_returns_and_closes_connection(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        with ad_conn as entered_connection:
+            self.assertIs(entered_connection, ad_conn)
+            self.mock_connection.unbind.assert_not_called()
+
+        self.mock_connection.unbind.assert_called_once_with()
+
+    def test_context_manager_closes_and_propagates_original_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        with self.assertRaisesRegex(RuntimeError, "ORIGINAL_ERROR_CANARY"):
+            with ad_conn:
+                raise RuntimeError("ORIGINAL_ERROR_CANARY")
+
+        self.mock_connection.unbind.assert_called_once_with()
+
+    def test_context_cleanup_failure_does_not_mask_original_error(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.unbind.side_effect = LDAPCommunicationError(
+            "CLEANUP_ERROR_CANARY"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "ORIGINAL_ERROR_CANARY"):
+            with ad_conn:
+                raise RuntimeError("ORIGINAL_ERROR_CANARY")
+
+    def test_rebind_reopens_lifecycle_and_preserves_options(self):
+        tls_config = ADTLSConfig.secure()
+        ad_conn = ADConnection(
+            self.servers,
+            self.search_base,
+            authentication="simple",
+            username="SIMPLE_USER_CANARY",
+            password="SIMPLE_PASSWORD_CANARY",
+            tls=tls_config,
+            receive_timeout=30,
+            read_retry_count=2,
+        )
+
+        ad_conn.rebind()
+        ad_conn.close()
+
+        self.assertEqual(self.mock_connection.unbind.call_count, 2)
+        self.assertIs(ad_conn.tls_config, tls_config)
+        self.assertEqual(ad_conn.authentication_mode, "simple")
+        self.assertEqual(ad_conn.receive_timeout, 30)
+        self.assertEqual(ad_conn.read_retry_count, 2)
+
     # -- decorator: retry on session error ------------------------------
 
     def test_search_retries_on_session_terminated(self):
@@ -446,6 +945,26 @@ class TestAutoReconnect(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['cn'], 'Jane Doe')
+
+    def test_retry_warning_omits_filter_exception_and_server_canaries(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        filter_canary = 'TASK0_FILTER_CANARY'
+        exception_canary = 'TASK0_EXCEPTION_CANARY'
+        self.mock_connection.extend.standard.paged_search.side_effect = [
+            LDAPCommunicationError(exception_canary),
+            iter([]),
+        ]
+
+        with patch.object(ad_conn, '_rebind_after_failure'), self.assertLogs(
+            'python_apis.apis.ad_api', level='WARNING'
+        ) as captured_logs:
+            ad_conn.search(f'(cn={filter_canary})', ['cn'])
+
+        logs = '\n'.join(captured_logs.output)
+        self.assertNotIn(filter_canary, logs)
+        self.assertNotIn(exception_canary, logs)
+        self.assertNotIn('server1', logs)
+        self.assertNotIn('server2', logs)
 
     def test_search_discards_partial_entries_before_retry(self):
         ad_conn = ADConnection(self.servers, self.search_base)

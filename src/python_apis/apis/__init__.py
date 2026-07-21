@@ -38,28 +38,57 @@ Dependencies:
 
 """
 
+# pylint: disable=duplicate-code
+
+from python_apis.apis.ad_config import ADAuthenticationMode, ADTLSConfig
 from python_apis.apis.ad_api import (
-    ADBindError,
     ADConnection,
-    ADConnectionError,
-    ADMissingServersError,
     AD_RECOVERABLE_READ_EXCEPTIONS,
     AD_READ_RETRY_POLICY,
     AD_WRITE_RETRY_POLICY,
     RetryTelemetry,
+    escape_filter_value,
+)
+from python_apis.apis.ad_errors import (
+    ADBindError,
+    ADConfigurationError,
+    ADConnectionError,
+    ADMalformedQueryError,
+    ADMalformedResultError,
+    ADMissingServersError,
+    ADQueryRejectedError,
+    ADReadError,
+    ADSearchError,
+    ADTimeoutError,
+    ADTLSConfigurationError,
+    ADTLSVerificationError,
+    ADTransportError,
 )
 from python_apis.apis.jira_api import JiraConnection
 from python_apis.apis.sql_api import SQLConnection
 
 __all__ = [
+    "ADAuthenticationMode",
     "ADBindError",
+    "ADConfigurationError",
     "ADConnection",
     "ADConnectionError",
+    "ADMalformedQueryError",
+    "ADMalformedResultError",
     "ADMissingServersError",
+    "ADQueryRejectedError",
+    "ADReadError",
     "AD_RECOVERABLE_READ_EXCEPTIONS",
     "AD_READ_RETRY_POLICY",
     "AD_WRITE_RETRY_POLICY",
+    "ADSearchError",
+    "ADTimeoutError",
+    "ADTLSConfig",
+    "ADTLSConfigurationError",
+    "ADTLSVerificationError",
+    "ADTransportError",
     "RetryTelemetry",
+    "escape_filter_value",
     "JiraConnection",
     "SQLConnection",
 ]

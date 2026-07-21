@@ -64,6 +64,42 @@ class TestCapabilityRegistry(unittest.TestCase):
             discovery.get_capability("does-not-exist")
         self.assertIn("Available:", str(ctx.exception))
 
+    def test_secure_authorization_capability_documents_strict_outcomes(self):
+        record = discovery.get_capability("secure-authorization-membership")
+
+        self.assertEqual(record["since_issue"], 54)
+        self.assertIn(
+            "python_apis.apis:ADTLSConfig.secure",
+            record["entry_points"],
+        )
+        self.assertIn("group_found=True", record["migration"])
+        self.assertIn("group_found=False", record["migration"])
+        self.assertIn("operational failures raise", record["migration"])
+
+    def test_issue_54_public_symbols_are_importable(self):
+        from python_apis.apis import (  # pylint: disable=import-outside-toplevel
+            ADConnection,
+            ADSearchError,
+            ADTLSConfig,
+            escape_filter_value,
+        )
+        from python_apis.models import (  # pylint: disable=import-outside-toplevel
+            ADGroupMembersResult,
+        )
+        from python_apis.services import (  # pylint: disable=import-outside-toplevel
+            ADMembershipService,
+        )
+
+        symbols = (
+            ADConnection,
+            ADSearchError,
+            ADTLSConfig,
+            ADGroupMembersResult,
+            ADMembershipService,
+            escape_filter_value,
+        )
+        self.assertTrue(all(symbol is not None for symbol in symbols))
+
 
 class TestQuickReference(unittest.TestCase):
     """Validate the printable quick reference."""

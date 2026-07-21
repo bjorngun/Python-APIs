@@ -7,28 +7,54 @@ this package will need a user that has the required permissions to edit/read the
 AD to run it effectively.
 """
 
+# pylint: disable=too-many-lines
+
 import functools
 import hashlib
 import logging
 import math
 import ssl
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
 
-from ldap3.utils.log import set_library_log_detail_level, BASIC
+from ldap3.utils.log import (
+    BASIC,
+    set_library_log_detail_level,
+    set_library_log_hide_sensitive_data,
+)
 from ldap3 import (ALL_ATTRIBUTES, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE,
-                   MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, GSSAPI,
+                   MODIFY_REPLACE, ROUND_ROBIN, SASL, SIMPLE, SUBTREE, GSSAPI,
                    Connection, Server, ServerPool, Tls)
 from ldap3.core.exceptions import (
+    LDAPCertificateError,
     LDAPCommunicationError,
     LDAPException,
     LDAPInvalidDnError,
+    LDAPInvalidFilterError,
+    LDAPResponseTimeoutError,
+    LDAPSSLConfigurationError,
     LDAPSessionTerminatedByServerError,
 )
 from ldap3.utils.dn import parse_dn
+from ldap3.utils.conv import escape_filter_chars
 
+from python_apis.apis.ad_config import ADAuthenticationMode, ADTLSConfig
+from python_apis.apis.ad_errors import (  # pylint: disable=unused-import
+    ADBindError,
+    ADConnectionError as ADConnectionError,
+    ADMalformedQueryError,
+    ADMalformedResultError,
+    ADMissingServersError,
+    ADQueryRejectedError,
+    ADTimeoutError,
+    ADTLSConfigurationError,
+    ADTLSVerificationError,
+    ADTransportError,
+    classify_ldap_result_code,
+)
 from python_apis.models.ad_get import ADGetResult
 
 logger = logging.getLogger(__name__)
@@ -40,6 +66,15 @@ AD_RECOVERABLE_READ_EXCEPTIONS = (
 _RECOVERABLE_EXCEPTIONS = AD_RECOVERABLE_READ_EXCEPTIONS
 _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
 _SUPPORTED_SEARCH_SCOPES = frozenset((BASE, LEVEL, SUBTREE))
+_LEGACY_LEAF_KEY_CIPHERS = "DEFAULT:@SECLEVEL=1"
+
+
+def escape_filter_value(value: str) -> str:
+    """Escape one caller-provided value for safe LDAP filter interpolation."""
+
+    if not isinstance(value, str):
+        raise TypeError("LDAP filter value must be a string")
+    return escape_filter_chars(value)
 
 
 def _build_retry_policy(operation_kind: str, max_retries: int) -> dict[str, Any]:
@@ -184,31 +219,30 @@ def _auto_reconnect(operation_kind: str = "write"):
     return decorator
 
 
-class ADConnectionError(Exception):
-    """Custom exception for errors related to Active Directory connections."""
+def _normalize_strict_read_errors(method):
+    """Wrap exhausted strict-read failures in safe public exceptions."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except LDAPResponseTimeoutError:
+            controller = self._mask_server_identifier(  # pylint: disable=protected-access
+                self._selected_server  # pylint: disable=protected-access
+            )
+            raise ADTimeoutError(controller) from None
+        except _RECOVERABLE_EXCEPTIONS:
+            controller = self._mask_server_identifier(  # pylint: disable=protected-access
+                self._selected_server  # pylint: disable=protected-access
+            )
+            raise ADTransportError(controller) from None
+        except (LDAPInvalidFilterError, LDAPInvalidDnError, ValueError):
+            raise ADMalformedQueryError() from None
+
+    return wrapper
 
 
-class ADBindError(ADConnectionError):
-    """Raised when an LDAP bind fails with safe diagnostic details."""
-
-    def __init__(
-        self,
-        result_code: int | str | None,
-        controller: str,
-    ) -> None:
-        self.result_code = result_code
-        self.controller = controller
-        super().__init__(
-            "Failed to bind to Active Directory "
-            f"(result_code={result_code!r}, controller={controller})"
-        )
-
-
-class ADMissingServersError(Exception):
-    """Custom exception for errors related to missing Active Directory servers."""
-
-
-class ADConnection:  # pylint: disable=too-many-public-methods
+class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """This class contains the functionality concerning the
     connection and the methods that gets data from AD and can modify the AD.
 
@@ -231,6 +265,10 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         read_retry_count: int = 1,
         read_retry_backoff_seconds: float = 0,
         write_retry_count: int = 0,
+        authentication: ADAuthenticationMode = "gssapi",
+        username: str | None = None,
+        password: str | None = None,
+        tls: ADTLSConfig | None = None,
     ):
         self._validate_connection_options(
             receive_timeout=receive_timeout,
@@ -240,7 +278,17 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             read_retry_backoff_seconds=read_retry_backoff_seconds,
             write_retry_count=write_retry_count,
         )
+        if tls is not None and not isinstance(tls, ADTLSConfig):
+            raise TypeError("tls must be an ADTLSConfig or None")
+        self._validate_authentication_options(
+            authentication=authentication,
+            username=username,
+            password=password,
+            tls=tls,
+        )
+        self._validate_tls_runtime_config(tls)
         if enable_ldap_logging:
+            set_library_log_hide_sensitive_data(True)
             set_library_log_detail_level(BASIC)
 
         self._servers = servers
@@ -255,6 +303,16 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         )
         self._last_retry_telemetry: RetryTelemetry | None = None
         self._selected_server: str | None = None
+        self._authentication = authentication
+        self._username = username
+        self._password = password
+        self._tls_config = tls
+        self._closed = False
+        if tls is not None and tls.legacy_leaf_key_compatibility:
+            logger.warning(
+                "Legacy leaf-key compatibility is enabled; certificate and hostname "
+                "validation remain required."
+            )
         self.connection = self._get_connection(servers)
 
     @property
@@ -286,6 +344,36 @@ class ADConnection:  # pylint: disable=too-many-public-methods
     def write_retry_count(self) -> int:
         """Maximum retries for writes; disabled unless explicitly configured."""
         return self._options.write_retry_count
+
+    @property
+    def tls_config(self) -> ADTLSConfig | None:
+        """Explicit TLS settings, or ``None`` for historical default behavior."""
+        return self._tls_config
+
+    @property
+    def authentication_mode(self) -> ADAuthenticationMode:
+        """Configured authentication mode without exposing credentials."""
+        return self._authentication
+
+    def __repr__(self) -> str:
+        """Return safe connection configuration metadata without directory values."""
+
+        tls_mode = "legacy-default" if self._tls_config is None else "explicit"
+        return (
+            f"ADConnection(authentication={self._authentication!r}, "
+            f"tls={tls_mode!r}, servers={len(self._servers)})"
+        )
+
+    def __enter__(self) -> "ADConnection":
+        """Return this open connection for context-managed use."""
+
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback) -> Literal[False]:
+        """Close the connection without suppressing an active exception."""
+
+        self.close()
+        return False
 
     @staticmethod
     def _validate_connection_options(  # pylint: disable=too-many-arguments
@@ -350,40 +438,179 @@ class ADConnection:  # pylint: disable=too-many-public-methods
 
         return self._last_retry_telemetry
 
-    def _get_connection(self, servers: list[str]) -> Connection:
+    @staticmethod
+    def _validate_tls_runtime_config(tls: ADTLSConfig | None) -> None:
+        """Preflight explicit trust and cipher settings without exposing values."""
+
+        if tls is None:
+            return
+
+        context = ssl.create_default_context()
+        ciphers = (
+            _LEGACY_LEAF_KEY_CIPHERS
+            if tls.legacy_leaf_key_compatibility
+            else tls.ciphers
+        )
+        try:
+            if ciphers is not None:
+                context.set_ciphers(ciphers)
+            if tls.ca_certs_file or tls.ca_certs_path or tls.ca_certs_data:
+                context.load_verify_locations(
+                    cafile=tls.ca_certs_file,
+                    capath=tls.ca_certs_path,
+                    cadata=tls.ca_certs_data,
+                )
+        except (OSError, ValueError, ssl.SSLError):
+            raise ADTLSConfigurationError() from None
+
+    @staticmethod
+    def _validate_authentication_options(
+        *,
+        authentication: str,
+        username: str | None,
+        password: str | None,
+        tls: ADTLSConfig | None,
+    ) -> None:
+        """Validate authentication inputs before constructing LDAP objects."""
+
+        if authentication not in ("gssapi", "simple"):
+            raise ValueError("authentication must be 'gssapi' or 'simple'")
+        if authentication == "gssapi":
+            if username is not None or password is not None:
+                raise ValueError("username and password must be omitted for gssapi")
+            return
+        if not isinstance(username, str) or not username.strip():
+            raise ValueError("username must be a non-empty string for simple authentication")
+        if not isinstance(password, str) or not password:
+            raise ValueError("password must be a non-empty string for simple authentication")
+        if tls is None or tls.validate != ssl.CERT_REQUIRED:
+            raise ValueError("simple authentication requires validated TLS")
+
+    @staticmethod
+    def _scrub_bound_simple_credentials(connection: Connection) -> None:
+        """Remove simple-bind credentials from the bound ldap3 representation."""
+
+        connection.user = None
+        connection.password = None
+
+    def _raise_safe_bind_error(
+        self,
+        connection: Connection,
+        exception: BaseException,
+    ) -> NoReturn:
+        """Classify a bind failure without exposing the raw exception context."""
+
+        controller = self._mask_server_identifier(
+            self._bound_server_identifier(connection)
+        )
+        if self._authentication == "simple":
+            self._scrub_bound_simple_credentials(connection)
+        if isinstance(exception, (LDAPResponseTimeoutError, TimeoutError)):
+            raise ADTimeoutError(controller) from None
+        if isinstance(
+            exception,
+            (LDAPCertificateError, LDAPSSLConfigurationError, ssl.SSLError),
+        ):
+            raise ADTLSVerificationError(controller) from None
+        if isinstance(exception, (*_RECOVERABLE_EXCEPTIONS, OSError)):
+            raise ADTransportError(controller) from None
+        raise ADBindError(None, controller) from None
+
+    @staticmethod
+    def _secure_server_endpoint(server: str) -> tuple[str, int | None]:
+        """Return a host and optional port suitable for validated TLS."""
+
+        candidate = server.strip()
+        parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+        host = parsed.hostname
+        if not host:
+            raise ValueError("Configured server must include a valid host")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("Configured server must include a valid port") from exc
+        return host, port
+
+    @staticmethod
+    def _build_explicit_tls(tls: ADTLSConfig, server_host: str) -> Tls:
+        """Build a per-server ldap3 TLS object from validated explicit config."""
+
+        ciphers = (
+            _LEGACY_LEAF_KEY_CIPHERS
+            if tls.legacy_leaf_key_compatibility
+            else tls.ciphers
+        )
+        return Tls(
+            validate=tls.validate,
+            version=tls.version,
+            ssl_options=tls.ssl_options,
+            ca_certs_file=tls.ca_certs_file,
+            ca_certs_path=tls.ca_certs_path,
+            ca_certs_data=tls.ca_certs_data,
+            valid_names=tls.valid_names,
+            ciphers=ciphers,
+            sni=server_host,
+        )
+
+    def _get_connection(self, servers: list[str]) -> Connection:  # pylint: disable=too-many-branches,too-many-locals
         """initializes a connection to the active directory.
         """
         if not servers:
             raise ADMissingServersError  # Explicitly handle empty server list
 
-        tls = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
-        server_options = {"use_ssl": True, "tls": tls}
-        if self.connect_timeout is not None:
-            server_options["connect_timeout"] = self.connect_timeout
-        ldap_servers = [Server(server, **server_options) for server in servers]
+        if self._tls_config is None:
+            tls = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+            server_options = {"use_ssl": True, "tls": tls}
+            if self.connect_timeout is not None:
+                server_options["connect_timeout"] = self.connect_timeout
+            ldap_servers = [Server(server, **server_options) for server in servers]
+        else:
+            ldap_servers = []
+            for server in servers:
+                server_host, server_port = self._secure_server_endpoint(server)
+                server_options = {
+                    "use_ssl": True,
+                    "tls": self._build_explicit_tls(self._tls_config, server_host),
+                }
+                if server_port is not None:
+                    server_options["port"] = server_port
+                if self.connect_timeout is not None:
+                    server_options["connect_timeout"] = self.connect_timeout
+                ldap_servers.append(Server(server_host, **server_options))
 
         server_pool = ServerPool(ldap_servers, ROUND_ROBIN, active=True, exhaust=True)
 
-        connection = Connection(
-            server_pool,
-            authentication=SASL,
-            sasl_mechanism=GSSAPI,
-            receive_timeout=self.receive_timeout,
-        )
+        connection_options: dict[str, Any] = {
+            "receive_timeout": self.receive_timeout,
+        }
+        if self._authentication == "simple":
+            connection_options.update({
+                "authentication": SIMPLE,
+                "user": self._username,
+                "password": self._password,
+                "auto_referrals": False,
+            })
+        else:
+            connection_options.update({
+                "authentication": SASL,
+                "sasl_mechanism": GSSAPI,
+            })
+        connection = Connection(server_pool, **connection_options)
         try:
             bound = connection.bind()
-        except LDAPException as exc:
-            controller = self._mask_server_identifier(
-                self._bound_server_identifier(connection)
-            )
-            raise ADBindError(None, controller) from exc
+        except (LDAPException, OSError) as exc:
+            self._raise_safe_bind_error(connection, exc)
         if not bound:
             result = connection.result if isinstance(connection.result, dict) else {}
             result_code = result.get("result")
             controller = self._mask_server_identifier(
                 self._bound_server_identifier(connection)
             )
+            if self._authentication == "simple":
+                self._scrub_bound_simple_credentials(connection)
             raise ADBindError(result_code, controller)
+        if self._authentication == "simple":
+            self._scrub_bound_simple_credentials(connection)
         self._selected_server = self._bound_server_identifier(connection)
         return connection
 
@@ -439,11 +666,12 @@ class ADConnection:  # pylint: disable=too-many-public-methods
     ) -> None:
         """Close a failed connection, back off, and prefer another controller."""
 
-        self._close_connection()
+        self.close()
         if backoff_seconds > 0:
             time.sleep(backoff_seconds)
         ordered_servers = self._prioritize_alternate_servers(failed_server)
         self.connection = self._get_connection(ordered_servers)
+        self._closed = False
 
     def rebind(self) -> None:
         """Re-establish the LDAP connection using the original server list.
@@ -452,14 +680,23 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         reconnect behaviour built into every public operation method.
         """
         logger.info("Re-binding to Active Directory.")
-        self._close_connection()
+        self.close()
         self.connection = self._get_connection(self._servers)
+        self._closed = False
+
+    def close(self) -> None:
+        """Idempotently unbind the current LDAP connection best-effort."""
+
+        if self._closed:
+            return
+        self._close_connection()
+        self._closed = True
 
     def _close_connection(self) -> None:
         """Attempt to cleanly close the current LDAP connection."""
         try:
             self.connection.unbind()
-        except (LDAPSessionTerminatedByServerError, LDAPCommunicationError, OSError):
+        except (LDAPException, OSError):
             logger.debug("Could not cleanly unbind the previous connection.")
 
     def _get_paged_search(  # pylint: disable=too-many-arguments
@@ -482,6 +719,48 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             generator=True,
         )
         return entry_generator
+
+    def _materialize_paged_search(  # pylint: disable=too-many-arguments
+        self,
+        search_filter: str,
+        attributes: list[str] | str,
+        *,
+        search_base: str,
+        search_scope: str,
+        page_size: int,
+    ) -> list[dict[str, str]]:
+        """Consume one complete paged search attempt into plain dictionaries."""
+
+        entry_generator = self._get_paged_search(
+            search_filter,
+            attributes,
+            search_base=search_base,
+            search_scope=search_scope,
+            page_size=page_size,
+        )
+        result_list = [entry['attributes'] for entry in entry_generator if 'attributes' in entry]
+        for ad_object in result_list:
+            self._set_ou_for_object(ad_object)
+        return result_list
+
+    def _validate_strict_search_result(self) -> None:
+        """Raise safely unless the most recent LDAP result is explicit success."""
+
+        result = getattr(self.connection, "result", None)
+        if not isinstance(result, Mapping):
+            raise ADMalformedResultError()
+        result_code = result.get("result")
+        if isinstance(result_code, bool) or not isinstance(result_code, int):
+            raise ADMalformedResultError()
+        error_code = classify_ldap_result_code(result_code)
+        if error_code is None:
+            return
+        controller = self._mask_server_identifier(self._selected_server)
+        raise ADQueryRejectedError(
+            error_code=error_code,
+            result_code=result_code,
+            controller=controller,
+        )
 
     @staticmethod
     def _validate_search_options(
@@ -563,16 +842,47 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         self._validate_search_options(search_base, search_scope, page_size)
         effective_search_base = self.search_base if search_base is None else search_base
         effective_page_size = self.page_size if page_size is None else page_size
-        entry_generator = self._get_paged_search(
+        return self._materialize_paged_search(
             search_filter,
             attributes,
             search_base=effective_search_base,
             search_scope=search_scope,
             page_size=effective_page_size,
         )
-        result_list = [x['attributes'] for x in entry_generator if 'attributes' in x]
-        for ad_object in result_list:
-            self._set_ou_for_object(ad_object)
+
+    @_normalize_strict_read_errors
+    @_auto_reconnect("read")
+    def search_strict(  # pylint: disable=too-many-arguments
+        self,
+        search_filter: str,
+        attributes: list[str] | None = None,
+        *,
+        search_base: str | None = None,
+        search_scope: str = SUBTREE,
+        page_size: int | None = None,
+    ) -> list[dict[str, str]]:
+        """Return a complete paged search or raise a safe typed read error.
+
+        Unlike :meth:`search`, this method validates the final LDAP result so
+        rejected or malformed operations cannot be represented as an empty
+        successful result. Partial entries are discarded before any exception
+        leaves this method.
+        """
+
+        if attributes is None:
+            attributes = ALL_ATTRIBUTES
+
+        self._validate_search_options(search_base, search_scope, page_size)
+        effective_search_base = self.search_base if search_base is None else search_base
+        effective_page_size = self.page_size if page_size is None else page_size
+        result_list = self._materialize_paged_search(
+            search_filter,
+            attributes,
+            search_base=effective_search_base,
+            search_scope=search_scope,
+            page_size=effective_page_size,
+        )
+        self._validate_strict_search_result()
         return result_list
 
     def get_v2(

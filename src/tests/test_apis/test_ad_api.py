@@ -1,6 +1,6 @@
 # test_ad_api.py
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import ANY, call, patch, MagicMock
 import ssl
 from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, SUBTREE
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
@@ -58,6 +58,75 @@ class TestADConnection(unittest.TestCase):
         self.assertEqual(mock_server_cls.call_count, len(self.servers))
         mock_server_pool_cls.assert_called_once()
         self.mock_connection.bind.assert_called_once()
+
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    def test_custom_connection_options_are_stored_and_forwarded(
+        self, mock_server_cls, _mock_server_pool_cls
+    ):
+        conn = ADConnection(
+            self.servers,
+            self.search_base,
+            receive_timeout=30,
+            connect_timeout=4.5,
+            page_size=250,
+            read_retry_count=3,
+            read_retry_backoff_seconds=0.25,
+        )
+
+        self.assertEqual(conn.receive_timeout, 30)
+        self.assertEqual(conn.connect_timeout, 4.5)
+        self.assertEqual(conn.page_size, 250)
+        self.assertEqual(conn.read_retry_count, 3)
+        self.assertEqual(conn.read_retry_backoff_seconds, 0.25)
+        mock_server_cls.assert_has_calls([
+            call(server, use_ssl=True, tls=ANY, connect_timeout=4.5)
+            for server in self.servers
+        ])
+        self.assertEqual(self.mock_connection_cls.call_args.kwargs['receive_timeout'], 30)
+
+    @patch('python_apis.apis.ad_api.ServerPool')
+    @patch('python_apis.apis.ad_api.Server')
+    def test_rebind_preserves_custom_connection_options(
+        self, mock_server_cls, _mock_server_pool_cls
+    ):
+        conn = ADConnection(
+            self.servers,
+            self.search_base,
+            receive_timeout=30,
+            connect_timeout=7,
+        )
+        mock_server_cls.reset_mock()
+        self.mock_connection_cls.reset_mock()
+
+        conn.rebind()
+
+        mock_server_cls.assert_has_calls([
+            call(server, use_ssl=True, tls=ANY, connect_timeout=7)
+            for server in self.servers
+        ])
+        self.assertEqual(self.mock_connection_cls.call_args.kwargs['receive_timeout'], 30)
+
+    def test_invalid_connection_options_fail_before_ldap_objects_are_created(self):
+        invalid_options = [
+            ('receive_timeout', {'receive_timeout': 0}),
+            ('connect_timeout', {'connect_timeout': -1}),
+            ('page_size', {'page_size': 0}),
+            ('read_retry_count', {'read_retry_count': -1}),
+            ('read_retry_backoff_seconds', {'read_retry_backoff_seconds': -0.1}),
+        ]
+
+        for option_name, options in invalid_options:
+            with self.subTest(option=option_name), patch(
+                'python_apis.apis.ad_api.Server'
+            ) as mock_server_cls:
+                self.mock_connection_cls.reset_mock()
+
+                with self.assertRaisesRegex(ValueError, option_name):
+                    ADConnection(self.servers, self.search_base, **options)
+
+                mock_server_cls.assert_not_called()
+                self.mock_connection_cls.assert_not_called()
 
     def test_search(self):
         ad_conn = ADConnection(self.servers, self.search_base)

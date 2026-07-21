@@ -71,6 +71,17 @@ class RetryTelemetry:
     policy: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class _ADConnectionOptions:
+    """Validated immutable settings reused by every LDAP bind."""
+
+    receive_timeout: float
+    connect_timeout: float | None
+    page_size: int
+    read_retry_count: int
+    read_retry_backoff_seconds: float
+
+
 def _auto_reconnect(operation_kind: str = "write"):
     """Build a decorator that retries once after a rebind on recoverable errors.
 
@@ -129,7 +140,7 @@ class ADMissingServersError(Exception):
     """Custom exception for errors related to missing Active Directory servers."""
 
 
-class ADConnection:
+class ADConnection:  # pylint: disable=too-many-public-methods
     """This class contains the functionality concerning the
     connection and the methods that gets data from AD and can modify the AD.
 
@@ -140,19 +151,100 @@ class ADConnection:
         - Invalid or empty mode values always resolve to ``legacy``.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
-        servers: list,
+        servers: list[str],
         search_base: str,
         enable_ldap_logging: bool = False,
+        *,
+        receive_timeout: float = 10,
+        connect_timeout: float | None = None,
+        page_size: int = 500,
+        read_retry_count: int = 1,
+        read_retry_backoff_seconds: float = 0,
     ):
+        self._validate_connection_options(
+            receive_timeout=receive_timeout,
+            connect_timeout=connect_timeout,
+            page_size=page_size,
+            read_retry_count=read_retry_count,
+            read_retry_backoff_seconds=read_retry_backoff_seconds,
+        )
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
 
         self._servers = servers
-        self.connection = self._get_connection(servers)
         self.search_base = search_base
+        self._options = _ADConnectionOptions(
+            receive_timeout=receive_timeout,
+            connect_timeout=connect_timeout,
+            page_size=page_size,
+            read_retry_count=read_retry_count,
+            read_retry_backoff_seconds=read_retry_backoff_seconds,
+        )
         self._last_retry_telemetry: RetryTelemetry | None = None
+        self.connection = self._get_connection(servers)
+
+    @property
+    def receive_timeout(self) -> float:
+        """Maximum seconds to wait for an LDAP response."""
+        return self._options.receive_timeout
+
+    @property
+    def connect_timeout(self) -> float | None:
+        """Maximum seconds to wait for a server connection, when configured."""
+        return self._options.connect_timeout
+
+    @property
+    def page_size(self) -> int:
+        """Default number of entries requested per LDAP search page."""
+        return self._options.page_size
+
+    @property
+    def read_retry_count(self) -> int:
+        """Maximum number of retries after the initial read attempt."""
+        return self._options.read_retry_count
+
+    @property
+    def read_retry_backoff_seconds(self) -> float:
+        """Seconds to wait between recoverable read attempts."""
+        return self._options.read_retry_backoff_seconds
+
+    @staticmethod
+    def _validate_connection_options(
+        *,
+        receive_timeout: float,
+        connect_timeout: float | None,
+        page_size: int,
+        read_retry_count: int,
+        read_retry_backoff_seconds: float,
+    ) -> None:
+        """Validate connection policy before constructing LDAP objects."""
+
+        positive_numbers = {
+            "receive_timeout": receive_timeout,
+            "connect_timeout": connect_timeout,
+        }
+        for name, value in positive_numbers.items():
+            if value is None and name == "connect_timeout":
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                raise ValueError(f"{name} must be a positive number")
+
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0:
+            raise ValueError("page_size must be a positive integer")
+        if (
+            isinstance(read_retry_count, bool)
+            or not isinstance(read_retry_count, int)
+            or read_retry_count < 0
+        ):
+            raise ValueError("read_retry_count must be a non-negative integer")
+        if (
+            isinstance(read_retry_backoff_seconds, bool)
+            or not isinstance(read_retry_backoff_seconds, (int, float))
+            or read_retry_backoff_seconds < 0
+        ):
+            raise ValueError("read_retry_backoff_seconds must be a non-negative number")
 
     @property
     def last_retry_telemetry(self) -> RetryTelemetry | None:
@@ -172,7 +264,10 @@ class ADConnection:
             raise ADMissingServersError  # Explicitly handle empty server list
 
         tls = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
-        ldap_servers = [Server(x, use_ssl=True, tls=tls) for x in servers]
+        server_options = {"use_ssl": True, "tls": tls}
+        if self.connect_timeout is not None:
+            server_options["connect_timeout"] = self.connect_timeout
+        ldap_servers = [Server(server, **server_options) for server in servers]
 
         server_pool = ServerPool(ldap_servers, ROUND_ROBIN, active=True, exhaust=True)
 
@@ -180,7 +275,7 @@ class ADConnection:
             server_pool,
             authentication=SASL,
             sasl_mechanism=GSSAPI,
-            receive_timeout=10,
+            receive_timeout=self.receive_timeout,
         )
         if not connection.bind():
             raise ADConnectionError(

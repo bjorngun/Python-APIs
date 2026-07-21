@@ -288,6 +288,10 @@ cadence was followed before review.
    whole-query retry, controller rotation, telemetry, and write retry safety.
 - [Resilient search example](examples/ad_resilient_search.py) uses the public connection API and
    reports only aggregate counts and masked retry telemetry.
+- [AD resilience and OU inheritance migration](docs/migration/ad-resilience-ou-inheritance.md)
+   covers one-tree reuse, generic inheritance rules, bulk resolution, and staged rollout.
+- [OU inheritance example](examples/ou_inheritance.py) resolves neutral fields and applies returned
+   values explicitly without requiring a consumer ORM type.
 
 ## Architecture Decision Records
 

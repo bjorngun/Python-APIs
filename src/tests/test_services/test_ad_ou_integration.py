@@ -33,6 +33,14 @@ class TestADResiliencePublicExports(unittest.TestCase):
 class TestGenericOUIntegration(unittest.TestCase):
     """Exercise one-query tree loading and ordered mixed-object resolution."""
 
+    def test_ad_only_factory_does_not_initialize_sql_or_environment(self):
+        ad_connection = MagicMock()
+
+        service = ADOrganizationalUnitService.for_active_directory(ad_connection)
+
+        self.assertIs(service.ad_connection, ad_connection)
+        self.assertIsNone(service.sql_connection)
+
     def test_bulk_resolution_uses_one_tree_query_for_mixed_objects(self):
         root_dn = 'OU=Root,DC=example,DC=com'
         child_dn = f'OU=Child,{root_dn}'

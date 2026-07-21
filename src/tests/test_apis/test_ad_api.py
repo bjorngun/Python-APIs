@@ -166,6 +166,22 @@ class TestADConnection(unittest.TestCase):
             generator=True,
         )
 
+    def test_search_extracts_ou_after_complete_escaped_rdn(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.extend.standard.paged_search.return_value = iter([
+            {
+                'attributes': {
+                    'distinguishedName': (
+                        r'CN=Doe\, Jane+UID=jdoe,OU=Users,DC=example,DC=com'
+                    ),
+                },
+            },
+        ])
+
+        results = ad_conn.search('(objectClass=user)', ['distinguishedName'])
+
+        self.assertEqual(results[0]['ou'], 'OU=Users,DC=example,DC=com')
+
     def test_search_forwards_custom_base_scope_and_page_size(self):
         ad_conn = ADConnection(self.servers, self.search_base, page_size=250)
         self.mock_connection.extend.standard.paged_search.return_value = iter([])

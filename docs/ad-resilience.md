@@ -173,5 +173,5 @@ Do not add credentials, complete records, raw user DNs, or raw controller names 
 See [`examples/ad_resilient_search.py`](../examples/ad_resilient_search.py) for an environment-based
 example that performs a resilient read and reports only aggregate count and masked telemetry.
 
-OU-tree retrieval and caller-defined inheritance are documented separately in the migration guide
-added for issue #52.
+OU-tree retrieval and caller-defined inheritance are documented in the
+[AD resilience and OU inheritance migration guide](migration/ad-resilience-ou-inheritance.md).

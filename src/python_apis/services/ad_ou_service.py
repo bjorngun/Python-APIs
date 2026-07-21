@@ -8,7 +8,7 @@ organizational units.
 from logging import getLogger
 import os
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from ldap3 import SUBTREE
 from ldap3.core.exceptions import LDAPException
@@ -66,6 +66,19 @@ class ADOrganizationalUnitService:
         if ad_connection is None:
             ad_connection = self._get_ad_connection(ldap_logging)
         self.ad_connection = ad_connection
+
+    @classmethod
+    def for_active_directory(
+        cls,
+        ad_connection: ADConnection,
+    ) -> 'ADOrganizationalUnitService':
+        """Create an AD-only OU service without SQL or environment initialization."""
+
+        service = cls.__new__(cls)
+        service.logger = getLogger(__name__)
+        service.ad_connection = ad_connection
+        service.sql_connection = cast(SQLConnection, None)
+        return service
 
     def _get_sql_connection(self) -> SQLConnection:
         """Create and return a SQLConnection instance based on environment variables.

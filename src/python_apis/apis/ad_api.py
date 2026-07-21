@@ -23,8 +23,10 @@ from ldap3 import (ALL_ATTRIBUTES, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE,
 from ldap3.core.exceptions import (
     LDAPCommunicationError,
     LDAPException,
+    LDAPInvalidDnError,
     LDAPSessionTerminatedByServerError,
 )
+from ldap3.utils.dn import parse_dn
 
 from python_apis.models.ad_get import ADGetResult
 
@@ -493,10 +495,30 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             return
 
         distinguished_name = ad_object['distinguishedName']
-        if ',' not in distinguished_name:
+        if not isinstance(distinguished_name, str):
             return
-
-        ad_object['ou'] = ','.join(distinguished_name.split(',')[1:])
+        try:
+            parsed_components = parse_dn(
+                distinguished_name,
+                escape=True,
+                strip=True,
+            )
+        except LDAPInvalidDnError:
+            return
+        first_rdn_end = next(
+            (
+                index
+                for index, (_attribute, _value, separator) in enumerate(parsed_components)
+                if separator != '+'
+            ),
+            len(parsed_components) - 1,
+        )
+        parent_components = parsed_components[first_rdn_end + 1:]
+        if parent_components:
+            ad_object['ou'] = ''.join(
+                f"{attribute}={value}{separator}"
+                for attribute, value, separator in parent_components
+            )
 
     @_auto_reconnect("read")
     def search(  # pylint: disable=too-many-arguments

@@ -3,10 +3,13 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from python_apis.apis import escape_filter_value
+from ldap3.core.exceptions import LDAPCommunicationError
+
+from python_apis.apis import ADConnection, escape_filter_value
 from python_apis.apis.ad_errors import (
     ADMalformedQueryError,
     ADMalformedResultError,
+    ADQueryRejectedError,
     ADTransportError,
 )
 from python_apis.models import ADGetResult
@@ -196,6 +199,149 @@ class TestADMembershipServiceTransitiveMembers(unittest.TestCase):
 
         with self.assertRaises(ADTransportError):
             self.service.get_transitive_enabled_group_members("group")
+
+
+class TestADMembershipIntegration(unittest.TestCase):
+    """Exercise membership behavior through the real strict connection path."""
+
+    def setUp(self):
+        self.connection_patcher = patch("python_apis.apis.ad_api.Connection")
+        self.connection_class = self.connection_patcher.start()
+        self.addCleanup(self.connection_patcher.stop)
+        self.ldap_connection = MagicMock()
+        self.ldap_connection.bind.return_value = True
+        self.ldap_connection.server.host = "directory.example.test"
+        self.connection_class.return_value = self.ldap_connection
+        self.ad_connection = ADConnection(
+            ["ldaps://directory.example.test"],
+            "DC=example,DC=test",
+        )
+        self.service = ADMembershipService(self.ad_connection)
+
+    @staticmethod
+    def _page(connection, entries, result_code=0):
+        """Yield entries and set the final LDAP result when consumed."""
+
+        def generator():
+            yield from entries
+            connection.result = {"result": result_code}
+
+        return generator()
+
+    def test_multi_page_membership_is_complete_unique_and_normalized(self):
+        group_page = self._page(
+            self.ldap_connection,
+            [{"attributes": {"distinguishedName": "CN=Group,DC=example,DC=test"}}],
+        )
+        member_pages = self._page(
+            self.ldap_connection,
+            [
+                {"attributes": {"sAMAccountName": "User-A"}},
+                {"attributes": {"sAMAccountName": "USER-B"}},
+                {"attributes": {"sAMAccountName": "user-a"}},
+            ],
+        )
+        self.ldap_connection.extend.standard.paged_search.side_effect = [
+            group_page,
+            member_pages,
+        ]
+
+        result = self.service.get_transitive_enabled_group_members("stable-group")
+
+        self.assertTrue(result.group_found)
+        self.assertEqual(result.members, ("user-a", "user-b"))
+        calls = self.ldap_connection.extend.standard.paged_search.call_args_list
+        self.assertEqual(calls[0].kwargs["paged_size"], 500)
+        self.assertEqual(calls[1].kwargs["paged_size"], 500)
+
+    def test_each_refresh_resolves_the_group_current_dn(self):
+        old_dn = "CN=Group,OU=Old,DC=example,DC=test"
+        new_dn = "CN=Group,OU=New,DC=example,DC=test"
+        self.ldap_connection.extend.standard.paged_search.side_effect = [
+            self._page(
+                self.ldap_connection,
+                [{"attributes": {"distinguishedName": old_dn}}],
+            ),
+            self._page(self.ldap_connection, []),
+            self._page(
+                self.ldap_connection,
+                [{"attributes": {"distinguishedName": new_dn}}],
+            ),
+            self._page(self.ldap_connection, []),
+        ]
+
+        self.service.get_transitive_enabled_group_members("stable-group")
+        self.service.get_transitive_enabled_group_members("stable-group")
+
+        calls = self.ldap_connection.extend.standard.paged_search.call_args_list
+        self.assertIn("OU=Old", calls[1].kwargs["search_filter"])
+        self.assertIn("OU=New", calls[3].kwargs["search_filter"])
+
+    def test_partial_member_page_is_discarded_before_retry(self):
+        recovered_connection = MagicMock()
+        recovered_connection.bind.return_value = True
+        recovered_connection.server.host = "directory-backup.example.test"
+
+        def interrupted_members():
+            yield {"attributes": {"sAMAccountName": "PARTIAL_MEMBER_CANARY"}}
+            raise LDAPCommunicationError("TRANSPORT_CANARY")
+
+        self.ldap_connection.extend.standard.paged_search.side_effect = [
+            self._page(
+                self.ldap_connection,
+                [{"attributes": {"distinguishedName": "CN=Group,DC=example,DC=test"}}],
+            ),
+            interrupted_members(),
+        ]
+        recovered_connection.extend.standard.paged_search.return_value = self._page(
+            recovered_connection,
+            [{"attributes": {"sAMAccountName": "Complete-Member"}}],
+        )
+        self.connection_class.side_effect = [recovered_connection]
+
+        result = self.service.get_transitive_enabled_group_members("stable-group")
+
+        self.assertEqual(result.members, ("complete-member",))
+        self.assertNotIn("partial_member_canary", result.members)
+        self.assertEqual(self.ad_connection.last_retry_telemetry.retry_count, 1)
+        self.assertTrue(self.ad_connection.last_retry_telemetry.recovered)
+
+    def test_rejected_member_query_never_becomes_empty_success(self):
+        self.ldap_connection.extend.standard.paged_search.side_effect = [
+            self._page(
+                self.ldap_connection,
+                [{"attributes": {"distinguishedName": "CN=Group,DC=example,DC=test"}}],
+            ),
+            self._page(self.ldap_connection, [], result_code=50),
+        ]
+
+        with self.assertRaises(ADQueryRejectedError):
+            self.service.get_transitive_enabled_group_members("stable-group")
+
+    def test_exhausted_transport_never_becomes_empty_success(self):
+        self.ldap_connection.extend.standard.paged_search.side_effect = [
+            self._page(
+                self.ldap_connection,
+                [{"attributes": {"distinguishedName": "CN=Group,DC=example,DC=test"}}],
+            ),
+            LDAPCommunicationError("FIRST_TRANSPORT_CANARY"),
+        ]
+        recovered_connection = MagicMock()
+        recovered_connection.bind.return_value = True
+        recovered_connection.server.host = "directory-backup.example.test"
+        recovered_connection.extend.standard.paged_search.side_effect = LDAPCommunicationError(
+            "SECOND_TRANSPORT_CANARY"
+        )
+        self.connection_class.side_effect = [recovered_connection]
+
+        with self.assertRaises(ADTransportError) as captured_error:
+            self.service.get_transitive_enabled_group_members("stable-group")
+
+        message = str(captured_error.exception)
+        self.assertNotIn("FIRST_TRANSPORT_CANARY", message)
+        self.assertNotIn("SECOND_TRANSPORT_CANARY", message)
+        self.assertNotIn("stable-group", message)
+        self.assertEqual(self.ad_connection.last_retry_telemetry.retry_count, 1)
 
 
 if __name__ == "__main__":

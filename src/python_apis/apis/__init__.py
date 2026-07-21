@@ -38,6 +38,7 @@ Dependencies:
 
 """
 
+from python_apis.apis.ad_config import ADAuthenticationMode, ADTLSConfig
 from python_apis.apis.ad_api import (
     ADBindError,
     ADConnection,
@@ -52,6 +53,7 @@ from python_apis.apis.jira_api import JiraConnection
 from python_apis.apis.sql_api import SQLConnection
 
 __all__ = [
+    "ADAuthenticationMode",
     "ADBindError",
     "ADConnection",
     "ADConnectionError",
@@ -59,6 +61,7 @@ __all__ = [
     "AD_RECOVERABLE_READ_EXCEPTIONS",
     "AD_READ_RETRY_POLICY",
     "AD_WRITE_RETRY_POLICY",
+    "ADTLSConfig",
     "RetryTelemetry",
     "JiraConnection",
     "SQLConnection",

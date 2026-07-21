@@ -3,8 +3,9 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from examples import secure_ad_connection
-from python_apis.apis import ADConnectionError
+from examples import authorization_membership, secure_ad_connection
+from python_apis.apis import ADConnectionError, ADTransportError
+from python_apis.models import ADGroupMembersResult
 
 
 class TestSecureADConnectionExample(unittest.TestCase):
@@ -66,6 +67,72 @@ class TestSecureADConnectionExample(unittest.TestCase):
 
         self.assertEqual(captured_error.exception.error_code, "AD_VALIDATION_ERROR")
         self.assertNotIn("UNSUPPORTED_MODE_CANARY", str(captured_error.exception))
+
+
+class TestAuthorizationMembershipExample(unittest.TestCase):
+    """Verify snapshot persistence occurs only after complete successful reads."""
+
+    def test_found_members_replace_snapshot(self):
+        membership = MagicMock()
+        membership.get_transitive_enabled_group_members.return_value = (
+            ADGroupMembersResult.found({"user-b", "user-a"})
+        )
+        replace_snapshot = MagicMock()
+
+        status = authorization_membership.refresh_authorization_snapshot(
+            membership,
+            "GROUP_ID_CANARY",
+            replace_snapshot,
+        )
+
+        self.assertEqual(status, "updated")
+        replace_snapshot.assert_called_once_with(("user-a", "user-b"))
+
+    def test_valid_empty_replaces_snapshot_with_empty_tuple(self):
+        membership = MagicMock()
+        membership.get_transitive_enabled_group_members.return_value = (
+            ADGroupMembersResult.found(set())
+        )
+        replace_snapshot = MagicMock()
+
+        status = authorization_membership.refresh_authorization_snapshot(
+            membership,
+            "GROUP_ID_CANARY",
+            replace_snapshot,
+        )
+
+        self.assertEqual(status, "updated")
+        replace_snapshot.assert_called_once_with(())
+
+    def test_missing_group_does_not_replace_snapshot(self):
+        membership = MagicMock()
+        membership.get_transitive_enabled_group_members.return_value = (
+            ADGroupMembersResult.not_found()
+        )
+        replace_snapshot = MagicMock()
+
+        status = authorization_membership.refresh_authorization_snapshot(
+            membership,
+            "GROUP_ID_CANARY",
+            replace_snapshot,
+        )
+
+        self.assertEqual(status, "group_not_found")
+        replace_snapshot.assert_not_called()
+
+    def test_read_failure_propagates_before_snapshot_replacement(self):
+        membership = MagicMock()
+        membership.get_transitive_enabled_group_members.side_effect = ADTransportError()
+        replace_snapshot = MagicMock()
+
+        with self.assertRaises(ADTransportError):
+            authorization_membership.refresh_authorization_snapshot(
+                membership,
+                "GROUP_ID_CANARY",
+                replace_snapshot,
+            )
+
+        replace_snapshot.assert_not_called()
 
 
 if __name__ == "__main__":

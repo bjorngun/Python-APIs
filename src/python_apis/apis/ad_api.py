@@ -36,6 +36,12 @@ from ldap3.core.exceptions import (
 from ldap3.utils.dn import parse_dn
 
 from python_apis.apis.ad_config import ADAuthenticationMode, ADTLSConfig
+from python_apis.apis.ad_errors import (  # pylint: disable=unused-import
+    ADBindError,
+    ADConnectionError as ADConnectionError,
+    ADMissingServersError,
+    ADTLSConfigurationError,
+)
 from python_apis.models.ad_get import ADGetResult
 
 logger = logging.getLogger(__name__)
@@ -190,30 +196,6 @@ def _auto_reconnect(operation_kind: str = "write"):
         return wrapper
 
     return decorator
-
-
-class ADConnectionError(Exception):
-    """Custom exception for errors related to Active Directory connections."""
-
-
-class ADBindError(ADConnectionError):
-    """Raised when an LDAP bind fails with safe diagnostic details."""
-
-    def __init__(
-        self,
-        result_code: int | str | None,
-        controller: str,
-    ) -> None:
-        self.result_code = result_code
-        self.controller = controller
-        super().__init__(
-            "Failed to bind to Active Directory "
-            f"(result_code={result_code!r}, controller={controller})"
-        )
-
-
-class ADMissingServersError(Exception):
-    """Custom exception for errors related to missing Active Directory servers."""
 
 
 class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
@@ -423,7 +405,7 @@ class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-pub
                     cadata=tls.ca_certs_data,
                 )
         except (OSError, ValueError, ssl.SSLError) as exc:
-            raise ValueError("Invalid TLS trust or cipher configuration") from exc
+            raise ADTLSConfigurationError() from exc
 
     @staticmethod
     def _validate_authentication_options(

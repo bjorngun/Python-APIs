@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Breaking Changes
 
+- **AD write retries are now explicit opt-in (issue #52, `semver:major`).** `ADConnection` defaults
+  `write_retry_count` to `0` instead of retrying writes once after a lost response. Callers must
+  opt in per connection only after accepting duplicate-side-effect risk. OU descriptions also
+  retain their source hyphens; caller-defined inheritance rules now own normalization.
 - **AD layer is now strict-only (issue #28, `semver:major`).** ADR 0001 Stage N+2 cleanup: the
   compatibility-mode system and all legacy mirror behavior have been removed. See
   `docs/migration/v-major-upgrade.md` for a full before/after upgrade guide.
@@ -48,6 +52,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Added
 
+- Reusable AD resilience and OU inheritance APIs (issue #52): configurable receive/connect
+  timeouts, paging, bounded read retry/backoff, per-search base/scope/page overrides,
+  controller-aware rebinding, masked retry telemetry, and safe `ADBindError` diagnostics.
+- One-query `ADOrganizationalUnitService.get_ou_tree()`, LDAP-aware DN hierarchy parsing,
+  caller-defined `OUAttributeRule` resolution, ordered generic bulk enrichment, SQL-free
+  `for_active_directory()` construction, public exports, examples, and staged migration guidance.
 - PR-time `validate-semver-label` CI check (issue #29, `semver:none`) that fails a pull request
   early when it is missing a SemVer label or has more than one, before merge.
 - In-package discoverability toolkit for the modernized AD surface (issue #27): `python_apis.discovery` (capability registry via `list_capabilities`/`get_capability` and a printable `quick_reference`), `python_apis.deprecation` (`warn_legacy` structured migration warnings), and `python_apis.migration_examples` (connection-free before/after snippets). All additive (`semver:minor`).

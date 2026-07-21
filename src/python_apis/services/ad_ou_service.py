@@ -89,8 +89,9 @@ class ADOrganizationalUnitService:
                 ADOrganizationalUnit instances.
         """
         for ou in ad_ous.values():
-            if ou.parseDistinguishedName in ad_ous:
-                parent_ou = ad_ous[ou.parseDistinguishedName]
+            parent_distinguished_name = ou.parent_ou_distinguished_name
+            if parent_distinguished_name in ad_ous:
+                parent_ou = ad_ous[parent_distinguished_name]
 
                 # Set up the child relation
                 if ou.children is None:

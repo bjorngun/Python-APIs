@@ -203,6 +203,9 @@ Keep this explicit application inside the consumer's transaction and only after 
 - Missing object OU DNs in bulk input raise an index-only `ValueError`.
 - An unknown but non-empty starting OU DN resolves rule defaults.
 
+Consumer reads should fail closed when an LDAP result has no safely derived immediate OU DN. Do not
+filter such records and continue with a reduced synchronization batch.
+
 Do not continue a synchronization with an incomplete tree after `ADOrganizationalUnitTreeError`.
 That could silently apply defaults where real ancestor values exist.
 

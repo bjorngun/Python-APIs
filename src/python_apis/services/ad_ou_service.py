@@ -27,6 +27,7 @@ from python_apis.services.compatibility_mode import finalize_ad_write_response
 from python_apis.services.ou_inheritance import (
     OUAttributeRule,
     resolve_inherited_attributes as resolve_ou_inherited_attributes,
+    resolve_inherited_attributes_for_dns,
 )
 
 
@@ -333,23 +334,19 @@ class ADOrganizationalUnitService:
                 search_base=search_base,
             )
 
-        resolution_cache: dict[str, dict[str, object | None]] = {}
-        resolved_values: list[dict[str, object | None]] = []
+        object_ou_dns: list[str] = []
         for index, item in enumerate(materialized_objects):
-            ou_dn = self._object_ou_dn(
+            object_ou_dns.append(self._object_ou_dn(
                 item,
                 index,
                 distinguished_name_attribute,
                 get_ou_dn,
-            )
-            if ou_dn not in resolution_cache:
-                resolution_cache[ou_dn] = self.resolve_inherited_attributes(
-                    ou_dn,
-                    rules,
-                    ou_tree=resolved_tree,
-                )
-            resolved_values.append(dict(resolution_cache[ou_dn]))
-        return resolved_values
+            ))
+        return resolve_inherited_attributes_for_dns(
+            object_ou_dns,
+            rules,
+            resolved_tree,
+        )
 
     def get_deepest_ou_field(
         self,

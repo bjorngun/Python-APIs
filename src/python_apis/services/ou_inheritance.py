@@ -1,6 +1,6 @@
 """Consumer-neutral rules for resolving inherited OU attributes."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +28,8 @@ class OUAttributeRule:
     def __post_init__(self) -> None:
         if not isinstance(self.source, str) or not self.source.strip():
             raise ValueError("OU rule source must be a non-empty string")
+        if not isinstance(self.aliases, tuple):
+            raise ValueError("OU rule aliases must be a tuple of strings")
         names = (self.source, *self.aliases)
         if any(not isinstance(name, str) or not name.strip() for name in names):
             raise ValueError("OU rule aliases must be non-empty strings")
@@ -42,22 +44,18 @@ class OUAttributeRule:
 
 def _build_ancestor_path(
     ou_dn: str,
-    ou_tree: Mapping[str, ADOrganizationalUnit],
+    canonical_tree: Mapping[CanonicalDistinguishedName, ADOrganizationalUnit],
 ) -> list[ADOrganizationalUnit]:
     """Build a nearest-first path and reject cyclic parent links."""
 
-    canonical_tree = {
-        canonicalize_distinguished_name(tree_dn): organizational_unit
-        for tree_dn, organizational_unit in ou_tree.items()
-    }
     current = canonical_tree.get(canonicalize_distinguished_name(ou_dn))
     path: list[ADOrganizationalUnit] = []
-    visited: set[CanonicalDistinguishedName] = set()
+    visited: set[int] = set()
     while current is not None:
         distinguished_name = current.distinguishedName
         if not isinstance(distinguished_name, str) or not distinguished_name:
             raise ValueError("OU tree contains an invalid distinguished name")
-        cycle_key = canonicalize_distinguished_name(distinguished_name)
+        cycle_key = id(current)
         if cycle_key in visited:
             raise OUInheritanceCycleError("Cycle detected in OU hierarchy")
         visited.add(cycle_key)
@@ -118,16 +116,37 @@ def resolve_inherited_attributes(
 ) -> dict[str, object | None]:
     """Resolve caller-selected outputs from the immediate OU toward the root."""
 
-    if not isinstance(ou_dn, str) or not ou_dn.strip():
-        raise ValueError("ou_dn must be a non-empty string")
+    return resolve_inherited_attributes_for_dns((ou_dn,), rules, ou_tree)[0]
+
+
+def resolve_inherited_attributes_for_dns(
+    ou_dns: Iterable[str],
+    rules: Mapping[str, OUAttributeRule],
+    ou_tree: Mapping[str, ADOrganizationalUnit],
+) -> list[dict[str, object | None]]:
+    """Resolve many OU DNs while canonicalizing the tree only once."""
+
     for target, rule in rules.items():
         if not isinstance(target, str) or not target.strip():
             raise ValueError("OU rule targets must be non-empty strings")
         if not isinstance(rule, OUAttributeRule):
             raise TypeError("OU rule values must be OUAttributeRule instances")
 
-    path = _build_ancestor_path(ou_dn, ou_tree)
-    return {
-        target: _resolve_rule(path, rule)
-        for target, rule in rules.items()
+    canonical_tree = {
+        canonicalize_distinguished_name(tree_dn): organizational_unit
+        for tree_dn, organizational_unit in ou_tree.items()
     }
+    resolution_cache: dict[CanonicalDistinguishedName, dict[str, object | None]] = {}
+    resolved_values: list[dict[str, object | None]] = []
+    for ou_dn in ou_dns:
+        if not isinstance(ou_dn, str) or not ou_dn.strip():
+            raise ValueError("ou_dn must be a non-empty string")
+        canonical_ou_dn = canonicalize_distinguished_name(ou_dn)
+        if canonical_ou_dn not in resolution_cache:
+            path = _build_ancestor_path(ou_dn, canonical_tree)
+            resolution_cache[canonical_ou_dn] = {
+                target: _resolve_rule(path, rule)
+                for target, rule in rules.items()
+            }
+        resolved_values.append(dict(resolution_cache[canonical_ou_dn]))
+    return resolved_values

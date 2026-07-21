@@ -33,7 +33,11 @@ from python_apis.models.ad_get import ADGetResult
 
 logger = logging.getLogger(__name__)
 
-_RECOVERABLE_EXCEPTIONS = (LDAPSessionTerminatedByServerError, LDAPCommunicationError)
+AD_RECOVERABLE_READ_EXCEPTIONS = (
+    LDAPSessionTerminatedByServerError,
+    LDAPCommunicationError,
+)
+_RECOVERABLE_EXCEPTIONS = AD_RECOVERABLE_READ_EXCEPTIONS
 _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPTIONS)
 _SUPPORTED_SEARCH_SCOPES = frozenset((BASE, LEVEL, SUBTREE))
 

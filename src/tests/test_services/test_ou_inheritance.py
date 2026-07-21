@@ -2,9 +2,10 @@
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from python_apis.models import ADOrganizationalUnit
+from python_apis.models.ad_ou import canonicalize_distinguished_name
 from python_apis.services.ad_ou_service import ADOrganizationalUnitService
 from python_apis.services.ou_inheritance import (
     OUAttributeRule,
@@ -126,6 +127,8 @@ class TestOUAttributeRuleResolution(unittest.TestCase):
             OUAttributeRule(source='')
         with self.assertRaisesRegex(ValueError, 'unique'):
             OUAttributeRule(source='street', aliases=('STREET',))
+        with self.assertRaisesRegex(ValueError, 'tuple'):
+            OUAttributeRule(source='street', aliases='streetAddress')
         with self.assertRaisesRegex(ValueError, 'targets'):
             self.service.resolve_inherited_attributes(
                 self.child.distinguishedName,
@@ -207,6 +210,27 @@ class TestBulkOUAttributeResolution(unittest.TestCase):
         self.service.get_ou_tree.assert_not_called()
         self.assertEqual([item['code'] for item in resolved], ['100', '200'])
         self.assertEqual(objects[0].location, self.root.distinguishedName)
+
+    def test_bulk_canonicalizes_each_tree_key_once(self):
+        objects = [
+            {'ou_dn': 'ou=child,ou=root,dc=example,dc=com'},
+            {'ou_dn': 'ou=root,dc=example,dc=com'},
+        ]
+
+        with patch(
+            'python_apis.services.ou_inheritance.canonicalize_distinguished_name',
+            wraps=canonicalize_distinguished_name,
+        ) as mock_canonicalize:
+            self.service.resolve_inherited_attributes_for_objects(
+                objects,
+                self.rules,
+                distinguished_name_attribute='ou_dn',
+                ou_tree=self.tree,
+            )
+
+        canonicalized_dns = [call.args[0] for call in mock_canonicalize.call_args_list]
+        self.assertEqual(canonicalized_dns.count(self.root.distinguishedName), 1)
+        self.assertEqual(canonicalized_dns.count(self.child.distinguishedName), 1)
 
     def test_empty_input_does_not_load_tree(self):
         resolved = self.service.resolve_inherited_attributes_for_objects([], self.rules)

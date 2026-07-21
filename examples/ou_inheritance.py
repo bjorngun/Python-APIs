@@ -8,16 +8,30 @@ Required environment variables:
 The example uses neutral object fields/defaults and prints only aggregate counts.
 """
 
+# pylint: disable=duplicate-code
+
 from dataclasses import dataclass
 import os
 
-from python_apis.apis import ADBindError, ADConnection, ADMissingServersError
+from python_apis.apis import (
+    ADBindError,
+    ADConnection,
+    ADMissingServersError,
+    AD_RECOVERABLE_READ_EXCEPTIONS,
+)
 from python_apis.services import (
     ADOrganizationalUnitService,
     ADOrganizationalUnitTreeError,
     OUAttributeRule,
     OUInheritanceCycleError,
 )
+
+class DirectoryObjectReadError(ValueError):
+    """Raised when a directory result has no safely derived OU DN."""
+
+    def __init__(self, entry_index: int) -> None:
+        self.entry_index = entry_index
+        super().__init__(f"Directory entry {entry_index} has no organizational unit")
 
 
 @dataclass
@@ -82,18 +96,44 @@ def build_connection() -> ADConnection:
     )
 
 
+def report_read_failure(connection: ADConnection) -> None:
+    """Print sanitized aggregate diagnostics for an exhausted read."""
+
+    telemetry = connection.last_retry_telemetry
+    if telemetry is None:
+        print("LDAP read failed: retry telemetry unavailable")
+        return
+    print(
+        "LDAP read failed: "
+        f"attempts={telemetry.attempt_count} "
+        f"retries={telemetry.retry_count} "
+        f"failed_controller={telemetry.failed_server} "
+        f"selected_controller={telemetry.selected_server}"
+    )
+
+
 def read_objects(connection: ADConnection) -> list[DirectoryObject]:
-    """Read objects and retain only their immediate OU DNs."""
+    """Read objects and require an immediate OU DN for every result."""
 
     entries = connection.search(
         "(&(objectClass=user)(objectCategory=person))",
         ["distinguishedName"],
     )
-    return [
-        DirectoryObject(organizational_unit_dn=entry["ou"])
-        for entry in entries
-        if isinstance(entry.get("ou"), str)
-    ]
+    objects: list[DirectoryObject] = []
+    for entry_index, entry in enumerate(entries):
+        organizational_unit_dn = entry.get("ou")
+        if not isinstance(organizational_unit_dn, str):
+            raise DirectoryObjectReadError(entry_index)
+        objects.append(DirectoryObject(organizational_unit_dn=organizational_unit_dn))
+    return objects
+
+
+def get_object_ou_dn(item: object) -> str | None:
+    """Return the OU DN from this example's consumer-owned object type."""
+
+    if isinstance(item, DirectoryObject):
+        return item.organizational_unit_dn
+    return None
 
 
 def enrich_objects(
@@ -113,7 +153,7 @@ def enrich_objects(
     resolved_rows = ou_service.resolve_inherited_attributes_for_objects(
         objects,
         rules,
-        get_ou_dn=lambda item: item.organizational_unit_dn,
+        get_ou_dn=get_object_ou_dn,
         ou_tree=ou_tree,
     )
     for item, values in zip(objects, resolved_rows):
@@ -136,6 +176,12 @@ def main() -> None:
             "LDAP bind failed: "
             f"result_code={error.result_code!r} controller={error.controller}"
         )
+        return
+    except AD_RECOVERABLE_READ_EXCEPTIONS:
+        report_read_failure(connection)
+        return
+    except DirectoryObjectReadError as error:
+        print(f"Directory object read failed: entry_index={error.entry_index}")
         return
     except (ADOrganizationalUnitTreeError, OUInheritanceCycleError) as error:
         print(f"OU enrichment failed: {type(error).__name__}")

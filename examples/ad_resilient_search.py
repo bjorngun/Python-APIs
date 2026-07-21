@@ -8,9 +8,16 @@ Required environment variables:
 The example prints only aggregate count and masked retry telemetry, not records or raw controllers.
 """
 
+# pylint: disable=duplicate-code
+
 import os
 
-from python_apis.apis import ADBindError, ADConnection, ADMissingServersError
+from python_apis.apis import (
+    ADBindError,
+    ADConnection,
+    ADMissingServersError,
+    AD_RECOVERABLE_READ_EXCEPTIONS,
+)
 
 
 def build_connection() -> ADConnection:
@@ -30,6 +37,22 @@ def build_connection() -> ADConnection:
     )
 
 
+def report_read_failure(connection: ADConnection) -> None:
+    """Print sanitized aggregate diagnostics for an exhausted read."""
+
+    telemetry = connection.last_retry_telemetry
+    if telemetry is None:
+        print("LDAP read failed: retry telemetry unavailable")
+        return
+    print(
+        "LDAP read failed: "
+        f"attempts={telemetry.attempt_count} "
+        f"retries={telemetry.retry_count} "
+        f"failed_controller={telemetry.failed_server} "
+        f"selected_controller={telemetry.selected_server}"
+    )
+
+
 def main() -> None:
     """Read users and print aggregate retry diagnostics."""
 
@@ -45,10 +68,14 @@ def main() -> None:
         )
         return
 
-    users = connection.search(
-        "(&(objectClass=user)(objectCategory=person))",
-        ["distinguishedName"],
-    )
+    try:
+        users = connection.search(
+            "(&(objectClass=user)(objectCategory=person))",
+            ["distinguishedName"],
+        )
+    except AD_RECOVERABLE_READ_EXCEPTIONS:
+        report_read_failure(connection)
+        return
     print(f"Completed LDAP read: returned_count={len(users)}")
 
     telemetry = connection.last_retry_telemetry

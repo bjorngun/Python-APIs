@@ -145,6 +145,9 @@ change package defaults.
 
 No-retry success, recovered retry, and exhausted retry all leave telemetry available. Read it before
 starting another decorated operation because the property always describes the most recent one.
+Catch exhausted recoverable read exceptions at application boundaries and report sanitized
+telemetry rather than raw exception text, which can contain controller or network details.
+`AD_RECOVERABLE_READ_EXCEPTIONS` is exported from `python_apis.apis` for this boundary.
 
 ## Safe Bind Errors and Logging
 

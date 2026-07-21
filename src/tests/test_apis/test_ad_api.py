@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 import ssl
-from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
+from ldap3 import MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE, SUBTREE
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
 from python_apis.apis.ad_api import (
     ADConnection,
@@ -26,6 +26,12 @@ class TestADConnection(unittest.TestCase):
 
     def test_init_success(self):
         conn = ADConnection(self.servers, self.search_base)
+        self.assertEqual(conn.search_base, self.search_base)
+        self.assertIsNotNone(conn.connection)
+
+    def test_init_accepts_legacy_positional_logging_argument(self):
+        conn = ADConnection(self.servers, self.search_base, False)
+
         self.assertEqual(conn.search_base, self.search_base)
         self.assertIsNotNone(conn.connection)
 
@@ -62,7 +68,14 @@ class TestADConnection(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['cn'], 'John Doe')
-        self.mock_connection.extend.standard.paged_search.assert_called_once()
+        self.mock_connection.extend.standard.paged_search.assert_called_once_with(
+            search_base=self.search_base,
+            search_filter='(objectClass=user)',
+            search_scope=SUBTREE,
+            attributes=['cn', 'mail'],
+            paged_size=500,
+            generator=True,
+        )
 
     def test_get_v2_with_results(self):
         ad_conn = ADConnection(self.servers, self.search_base)
@@ -267,6 +280,25 @@ class TestAutoReconnect(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['cn'], 'Jane Doe')
+
+    def test_search_discards_partial_entries_before_retry(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+
+        def interrupted_page():
+            yield {'attributes': {'cn': 'Partial Result'}}
+            raise LDAPCommunicationError('connection lost after partial page')
+
+        complete_result = [{'attributes': {'cn': 'Complete Result'}}]
+        self.mock_connection.extend.standard.paged_search.side_effect = [
+            interrupted_page(),
+            iter(complete_result),
+        ]
+
+        with patch.object(ad_conn, 'rebind') as mock_rebind:
+            results = ad_conn.search('(objectClass=user)', ['cn'])
+
+        mock_rebind.assert_called_once()
+        self.assertEqual(results, [{'cn': 'Complete Result'}])
 
     def test_modify_retries_on_communication_error(self):
         ad_conn = ADConnection(self.servers, self.search_base)

@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Added
 
+- Secure reusable AD authorization support (issue #54, `semver:minor`): per-connection
+  `ADTLSConfig.secure()` with OS/custom CA trust, hostname/SAN validation, modern negotiation, and
+  validated legacy-leaf-key compatibility; GSSAPI/simple-bind authentication with credential-safe
+  reconnect and diagnostics; additive fail-closed `search_strict()`; public filter escaping; an
+  SQL-free `ADMembershipService` that resolves current group DNs and returns typed transitive
+  enabled-user membership; idempotent `close()`/context management; discovery metadata, security
+  canary tests, examples, and adoption/migration guides. Omitting TLS preserves the historical
+  `CERT_NONE`/TLSv1.2 behavior for compatibility, while simple bind requires explicit validated TLS.
 - Reusable AD resilience and OU inheritance APIs (issue #52): configurable receive/connect
   timeouts, paging, bounded read retry/backoff, per-search base/scope/page overrides,
   controller-aware rebinding, masked retry telemetry, and safe `ADBindError` diagnostics.

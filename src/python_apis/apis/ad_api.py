@@ -10,6 +10,7 @@ AD to run it effectively.
 import functools
 import hashlib
 import logging
+import math
 import ssl
 import time
 from dataclasses import dataclass, field
@@ -301,7 +302,12 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         for name, value in positive_numbers.items():
             if value is None and name == "connect_timeout":
                 continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or (isinstance(value, float) and not math.isfinite(value))
+                or value <= 0
+            ):
                 raise ValueError(f"{name} must be a positive number")
 
         if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0:
@@ -321,6 +327,10 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         if (
             isinstance(read_retry_backoff_seconds, bool)
             or not isinstance(read_retry_backoff_seconds, (int, float))
+            or (
+                isinstance(read_retry_backoff_seconds, float)
+                and not math.isfinite(read_retry_backoff_seconds)
+            )
             or read_retry_backoff_seconds < 0
         ):
             raise ValueError("read_retry_backoff_seconds must be a non-negative number")

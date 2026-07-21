@@ -4,7 +4,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from python_apis.models.ad_ou import ADOrganizationalUnit
+from python_apis.models.ad_ou import (
+    ADOrganizationalUnit,
+    CanonicalDistinguishedName,
+    canonicalize_distinguished_name,
+)
 
 
 class OUInheritanceCycleError(ValueError):
@@ -42,14 +46,18 @@ def _build_ancestor_path(
 ) -> list[ADOrganizationalUnit]:
     """Build a nearest-first path and reject cyclic parent links."""
 
-    current = ou_tree.get(ou_dn)
+    canonical_tree = {
+        canonicalize_distinguished_name(tree_dn): organizational_unit
+        for tree_dn, organizational_unit in ou_tree.items()
+    }
+    current = canonical_tree.get(canonicalize_distinguished_name(ou_dn))
     path: list[ADOrganizationalUnit] = []
-    visited: set[str] = set()
+    visited: set[CanonicalDistinguishedName] = set()
     while current is not None:
         distinguished_name = current.distinguishedName
         if not isinstance(distinguished_name, str) or not distinguished_name:
             raise ValueError("OU tree contains an invalid distinguished name")
-        cycle_key = distinguished_name.casefold()
+        cycle_key = canonicalize_distinguished_name(distinguished_name)
         if cycle_key in visited:
             raise OUInheritanceCycleError("Cycle detected in OU hierarchy")
         visited.add(cycle_key)

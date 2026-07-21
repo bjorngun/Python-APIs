@@ -150,6 +150,10 @@ ou_tree = ou_service.get_ou_tree(
 `distinguishedName` is added automatically. The method performs one `SUBTREE` search and returns a
 `dict[str, ADOrganizationalUnit]` keyed by DN.
 
+`street` is an LDAP-only attribute stored in each OU's in-memory `ldap_attributes` mapping; it does
+not add a column to the existing `ADOrganizationalUnit` database table. Rules resolve it normally,
+including the `streetAddress` modeled-column alias shown above.
+
 For $n$ OUs and $m$ objects, tree construction is $O(n)$ after LDAP materialization. Resolution is
 in memory and proportional to each object's ancestor depth. Load one tree per synchronization run
 unless the consumer has a deliberate refresh policy. The package does not impose a process-global

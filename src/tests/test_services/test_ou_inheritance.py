@@ -96,6 +96,15 @@ class TestOUAttributeRuleResolution(unittest.TestCase):
 
         self.assertEqual(resolved, {'phone': 'not configured'})
 
+    def test_equivalent_caller_dn_resolves_existing_ou(self):
+        resolved = self.service.resolve_inherited_attributes(
+            'ou=child,ou=root,dc=EXAMPLE,dc=COM',
+            {'phone': OUAttributeRule(source='telephoneNumber')},
+            ou_tree=self.tree,
+        )
+
+        self.assertEqual(resolved, {'phone': '5551000'})
+
     def test_cycle_is_detected_before_values_are_returned(self):
         self.root.parent = self.child
         rules = {

@@ -129,10 +129,15 @@ class TestADConnection(unittest.TestCase):
     def test_invalid_connection_options_fail_before_ldap_objects_are_created(self):
         invalid_options = [
             ('receive_timeout', {'receive_timeout': 0}),
+            ('receive_timeout', {'receive_timeout': float('nan')}),
+            ('receive_timeout', {'receive_timeout': float('inf')}),
             ('connect_timeout', {'connect_timeout': -1}),
+            ('connect_timeout', {'connect_timeout': float('nan')}),
             ('page_size', {'page_size': 0}),
             ('read_retry_count', {'read_retry_count': -1}),
             ('read_retry_backoff_seconds', {'read_retry_backoff_seconds': -0.1}),
+            ('read_retry_backoff_seconds', {'read_retry_backoff_seconds': float('nan')}),
+            ('read_retry_backoff_seconds', {'read_retry_backoff_seconds': float('inf')}),
             ('write_retry_count', {'write_retry_count': -1}),
         ]
 

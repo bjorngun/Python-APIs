@@ -17,6 +17,10 @@ from pydantic import ValidationError
 from dev_tools import timing_decorator
 from python_apis.apis import ADConnection, SQLConnection
 from python_apis.models import ADOrganizationalUnit, ADBatchReadResult, base
+from python_apis.models.ad_ou import (
+    CanonicalDistinguishedName,
+    canonicalize_distinguished_name,
+)
 from python_apis.schemas import ADOrganizationalUnitSchema
 from python_apis.services.batch_read import build_batch_read_result
 from python_apis.services.compatibility_mode import finalize_ad_write_response
@@ -121,10 +125,19 @@ class ADOrganizationalUnitService:
             ou.children = []
             ou.parent = None
 
+        canonical_ous = {
+            canonicalize_distinguished_name(str(ou.distinguishedName)): ou
+            for ou in ad_ous.values()
+        }
         for ou in ad_ous.values():
             parent_distinguished_name = ou.parent_ou_distinguished_name
-            if parent_distinguished_name in ad_ous:
-                parent_ou = ad_ous[parent_distinguished_name]
+            if parent_distinguished_name is not None:
+                parent_ou = canonical_ous.get(
+                    canonicalize_distinguished_name(parent_distinguished_name)
+                )
+            else:
+                parent_ou = None
+            if parent_ou is not None:
 
                 parent_ou.children.append(ou)
                 ou.parent = parent_ou
@@ -134,7 +147,7 @@ class ADOrganizationalUnitService:
         """Return validated de-duplicated attributes including distinguishedName."""
 
         requested = (
-            ADOrganizationalUnit.get_attribute_list()
+            [*ADOrganizationalUnit.get_attribute_list(), 'street']
             if attributes is None
             else list(attributes)
         )
@@ -201,6 +214,7 @@ class ADOrganizationalUnitService:
             search_scope=SUBTREE,
         )
         ou_tree: dict[str, ADOrganizationalUnit] = {}
+        canonical_distinguished_names: set[CanonicalDistinguishedName] = set()
         for entry_index, entry in enumerate(entries):
             if not isinstance(entry, Mapping):
                 raise ADOrganizationalUnitTreeError(entry_index, 'invalid record')
@@ -211,7 +225,16 @@ class ADOrganizationalUnitService:
                     entry_index,
                     'missing distinguishedName',
                 )
-            if distinguished_name in ou_tree:
+            try:
+                canonical_distinguished_name = canonicalize_distinguished_name(
+                    distinguished_name
+                )
+            except ValueError as exc:
+                raise ADOrganizationalUnitTreeError(
+                    entry_index,
+                    'invalid organizational unit',
+                ) from exc
+            if canonical_distinguished_name in canonical_distinguished_names:
                 raise ADOrganizationalUnitTreeError(
                     entry_index,
                     'duplicate distinguishedName',
@@ -231,6 +254,7 @@ class ADOrganizationalUnitService:
                     'invalid organizational unit',
                 ) from exc
             ou_tree[distinguished_name] = organizational_unit
+            canonical_distinguished_names.add(canonical_distinguished_name)
 
         self.set_ou_children_and_parent(ou_tree)
         return ou_tree

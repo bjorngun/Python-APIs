@@ -30,11 +30,11 @@ connection = ADConnection(
 
 | Option | Default | Validation | Applied to |
 | --- | ---: | --- | --- |
-| `receive_timeout` | `10` | Positive number | `ldap3.Connection` response wait |
-| `connect_timeout` | `None` | `None` or positive number | Every configured `ldap3.Server` |
+| `receive_timeout` | `10` | Positive finite number | `ldap3.Connection` response wait |
+| `connect_timeout` | `None` | `None` or positive finite number | Every configured `ldap3.Server` |
 | `page_size` | `500` | Positive integer | Paged searches without an override |
 | `read_retry_count` | `1` | Non-negative integer | Retries after the initial read attempt |
-| `read_retry_backoff_seconds` | `0` | Non-negative number | Delay between failed read attempts |
+| `read_retry_backoff_seconds` | `0` | Non-negative finite number | Delay between failed read attempts |
 | `write_retry_count` | `0` | Non-negative integer | Explicit write retry opt-in |
 
 Validation happens before an LDAP `Server` or `Connection` is created. Manual `rebind()` and

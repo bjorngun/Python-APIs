@@ -33,7 +33,6 @@ class ADOrganizationalUnitSchema(BaseModel):
     objectSid: Optional[str] = None
     managedBy: Optional[str] = None
     l: Optional[str] = None  # Location
-    street: Optional[str] = None
     streetAddress: Optional[str] = None
     postalCode: Optional[str] = None
     telephoneNumber: Optional[str] = None

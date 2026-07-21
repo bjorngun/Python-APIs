@@ -52,6 +52,27 @@ class TestADOrganizationalUnitRelationships(unittest.TestCase):
         self.assertIsNone(orphan.parent)
         self.assertEqual(orphan.children, [])
 
+    def test_parent_link_uses_canonical_dn_equivalence(self):
+        parent = ADOrganizationalUnit(
+            distinguishedName=r'OU=Research\, Development,DC=Example,DC=COM',
+            name='Research, Development',
+        )
+        child = ADOrganizationalUnit(
+            distinguishedName=(
+                r'ou=platform,ou=research\2C development,dc=example,dc=com'
+            ),
+            name='Platform',
+        )
+        service = ADOrganizationalUnitService.__new__(ADOrganizationalUnitService)
+
+        service.set_ou_children_and_parent({
+            parent.distinguishedName: parent,
+            child.distinguishedName: child,
+        })
+
+        self.assertIs(child.parent, parent)
+        self.assertEqual(parent.children, [child])
+
 
 class TestADOrganizationalUnitTree(unittest.TestCase):
     """Validate single-query OU tree construction and defensive normalization."""
@@ -109,7 +130,7 @@ class TestADOrganizationalUnitTree(unittest.TestCase):
         self.assertIs(tree[child_dn].parent, tree[parent_dn])
         self.assertEqual(tree[parent_dn].children, [tree[child_dn]])
         self.assertEqual(tree[parent_dn].description, '12-34')
-        self.assertIsNone(tree[parent_dn].street)
+        self.assertIsNone(tree[parent_dn].ldap_attributes['street'])
         self.assertEqual(tree[parent_dn].telephoneNumber, '5551000,5551001')
         self.assertEqual(
             tree[parent_dn].ldap_attributes['extensionAttribute1'],
@@ -172,6 +193,21 @@ class TestADOrganizationalUnitTree(unittest.TestCase):
             'entry 1: duplicate distinguishedName',
         ):
             self.service.get_ou_tree()
+
+    def test_get_ou_tree_rejects_ldap_equivalent_duplicate_dn(self):
+        self.ad_connection.search.return_value = [
+            {'distinguishedName': r'OU=Research\, Development,DC=Example,DC=COM'},
+            {'distinguishedName': r'ou=research\2C development,dc=example,dc=com'},
+        ]
+
+        with self.assertRaisesRegex(
+            ADOrganizationalUnitTreeError,
+            'entry 1: duplicate distinguishedName',
+        ):
+            self.service.get_ou_tree()
+
+    def test_street_is_ldap_only_and_not_an_orm_column(self):
+        self.assertNotIn('street', ADOrganizationalUnit.__table__.columns)
 
     def test_get_ou_tree_validates_requested_attributes_before_search(self):
         with self.assertRaisesRegex(ValueError, 'OU attributes'):

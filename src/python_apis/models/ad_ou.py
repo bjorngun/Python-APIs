@@ -44,6 +44,7 @@ Optional and ClassVar.
 """
 
 
+from string import hexdigits
 from typing import Any, Optional, ClassVar
 from ldap3.core.exceptions import LDAPInvalidDnError
 from ldap3.utils.dn import parse_dn
@@ -52,6 +53,70 @@ from sqlalchemy.dialects.mssql import DATETIME2
 from sqlalchemy.orm import reconstructor
 
 from .base import Base
+
+CanonicalDistinguishedName = tuple[tuple[tuple[str, str], ...], ...]
+
+
+def _decode_distinguished_name_value(value: str) -> str:
+    """Decode RFC 4514 escaped characters and UTF-8 hex octets."""
+
+    decoded: list[str] = []
+    hex_octets = bytearray()
+
+    def flush_hex_octets() -> None:
+        if hex_octets:
+            decoded.append(hex_octets.decode('utf-8', errors='surrogateescape'))
+            hex_octets.clear()
+
+    index = 0
+    while index < len(value):
+        if value[index] != '\\':
+            flush_hex_octets()
+            decoded.append(value[index])
+            index += 1
+            continue
+        if (
+            index + 2 < len(value)
+            and value[index + 1] in hexdigits
+            and value[index + 2] in hexdigits
+        ):
+            hex_octets.append(int(value[index + 1:index + 3], 16))
+            index += 3
+            continue
+        flush_hex_octets()
+        if index + 1 < len(value):
+            decoded.append(value[index + 1])
+            index += 2
+        else:
+            decoded.append('\\')
+            index += 1
+    flush_hex_octets()
+    return ''.join(decoded)
+
+
+def canonicalize_distinguished_name(distinguished_name: str) -> CanonicalDistinguishedName:
+    """Return a hashable key for LDAP-equivalent distinguished-name spellings."""
+
+    if not isinstance(distinguished_name, str) or not distinguished_name.strip():
+        raise ValueError("Invalid distinguished name")
+    try:
+        parsed_components = parse_dn(distinguished_name, escape=True, strip=True)
+    except LDAPInvalidDnError as exc:
+        raise ValueError("Invalid distinguished name") from exc
+
+    relative_names: list[tuple[tuple[str, str], ...]] = []
+    current_parts: list[tuple[str, str]] = []
+    for attribute, value, separator in parsed_components:
+        current_parts.append((
+            attribute.casefold(),
+            _decode_distinguished_name_value(value).casefold(),
+        ))
+        if separator != '+':
+            relative_names.append(tuple(sorted(current_parts)))
+            current_parts = []
+    if current_parts:
+        relative_names.append(tuple(sorted(current_parts)))
+    return tuple(relative_names)
 
 class NotSetException(Exception):
     """
@@ -80,7 +145,6 @@ class ADOrganizationalUnit(Base):
     objectSid = Column(String(256))
     managedBy = Column(String(256))
     l = Column(String(256))  # Location
-    street = Column(String(256))
     streetAddress = Column(String(256))
     postalCode = Column(String(256))
     telephoneNumber = Column(String(256))
@@ -189,5 +253,5 @@ class ADOrganizationalUnit(Base):
         return [
             'distinguishedName', 'name', 'ou', 'description', 'whenCreated',
             'whenChanged', 'objectClass', 'objectGUID', 'objectSid',
-            'managedBy', 'l', 'street', 'streetAddress', 'postalCode', 'telephoneNumber'
+            'managedBy', 'l', 'streetAddress', 'postalCode', 'telephoneNumber'
         ]

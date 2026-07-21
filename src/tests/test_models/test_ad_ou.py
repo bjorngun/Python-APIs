@@ -3,6 +3,7 @@
 import unittest
 
 from python_apis.models import ADOrganizationalUnit
+from python_apis.models.ad_ou import canonicalize_distinguished_name
 
 
 class TestADOrganizationalUnitDistinguishedName(unittest.TestCase):
@@ -66,6 +67,24 @@ class TestADOrganizationalUnitDistinguishedName(unittest.TestCase):
             ou.parse_distinguished_name()
 
         self.assertNotIn('not-a-distinguished-name', str(context.exception))
+
+    def test_canonical_dn_matches_case_and_escape_variants(self):
+        escaped_character = r'OU=Research\, Development,DC=Example,DC=COM'
+        escaped_hex = r'ou=research\2C development,dc=example,dc=com'
+
+        self.assertEqual(
+            canonicalize_distinguished_name(escaped_character),
+            canonicalize_distinguished_name(escaped_hex),
+        )
+
+    def test_canonical_dn_ignores_multivalued_rdn_order(self):
+        first = 'OU=Platform+CN=Alias,DC=example,DC=com'
+        second = 'cn=alias+ou=platform,dc=example,dc=com'
+
+        self.assertEqual(
+            canonicalize_distinguished_name(first),
+            canonicalize_distinguished_name(second),
+        )
 
 
 if __name__ == '__main__':

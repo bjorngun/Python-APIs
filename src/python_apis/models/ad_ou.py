@@ -89,6 +89,7 @@ class ADOrganizationalUnit(Base):
     changes: ClassVar[Optional[str]] = None
     children: list['ADOrganizationalUnit']
     parent: Optional['ADOrganizationalUnit']
+    ldap_attributes: dict[str, Any]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -99,6 +100,7 @@ class ADOrganizationalUnit(Base):
         """Initialize non-persistent hierarchy links for each model instance."""
         self.children = []
         self.parent = None
+        self.ldap_attributes = {}
 
     def __repr__(self) -> str:
         """Return a string representation of the ADOrganizationalUnit instance."""

@@ -70,6 +70,7 @@ class TestADOrganizationalUnitTree(unittest.TestCase):
                 'description': ['12-34'],
                 'street': [],
                 'telephoneNumber': ['5551000', '5551001'],
+                'extensionAttribute1': ['Custom value'],
             },
             {
                 'distinguishedName': child_dn,
@@ -86,6 +87,7 @@ class TestADOrganizationalUnitTree(unittest.TestCase):
                 'streetAddress',
                 'description',
                 'telephoneNumber',
+                'extensionAttribute1',
             ],
             search_base='OU=Departments,DC=example,DC=com',
         )
@@ -98,6 +100,7 @@ class TestADOrganizationalUnitTree(unittest.TestCase):
                 'street',
                 'streetAddress',
                 'telephoneNumber',
+                'extensionAttribute1',
             ],
             search_base='OU=Departments,DC=example,DC=com',
             search_scope=SUBTREE,
@@ -108,6 +111,10 @@ class TestADOrganizationalUnitTree(unittest.TestCase):
         self.assertEqual(tree[parent_dn].description, '12-34')
         self.assertIsNone(tree[parent_dn].street)
         self.assertEqual(tree[parent_dn].telephoneNumber, '5551000,5551001')
+        self.assertEqual(
+            tree[parent_dn].ldap_attributes['extensionAttribute1'],
+            'Custom value',
+        )
         self.assertEqual(tree[child_dn].streetAddress, 'Main Street 1')
 
     def test_get_ou_tree_default_attributes_include_generic_street_forms(self):

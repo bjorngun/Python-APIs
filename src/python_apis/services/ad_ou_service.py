@@ -20,6 +20,10 @@ from python_apis.models import ADOrganizationalUnit, ADBatchReadResult, base
 from python_apis.schemas import ADOrganizationalUnitSchema
 from python_apis.services.batch_read import build_batch_read_result
 from python_apis.services.compatibility_mode import finalize_ad_write_response
+from python_apis.services.ou_inheritance import (
+    OUAttributeRule,
+    resolve_inherited_attributes as resolve_ou_inherited_attributes,
+)
 
 
 class ADOrganizationalUnitTreeError(ValueError):
@@ -202,6 +206,11 @@ class ADOrganizationalUnitService:
             try:
                 validated_data = ADOrganizationalUnitSchema(**normalized).model_dump()
                 organizational_unit = ADOrganizationalUnit(**validated_data)
+                organizational_unit.ldap_attributes = {
+                    attribute: value
+                    for attribute, value in normalized.items()
+                    if attribute not in validated_data
+                }
                 organizational_unit.parse_distinguished_name()
             except (ValidationError, ValueError) as exc:
                 raise ADOrganizationalUnitTreeError(
@@ -212,6 +221,17 @@ class ADOrganizationalUnitService:
 
         self.set_ou_children_and_parent(ou_tree)
         return ou_tree
+
+    def resolve_inherited_attributes(
+        self,
+        ou_dn: str,
+        rules: Mapping[str, OUAttributeRule],
+        *,
+        ou_tree: Mapping[str, ADOrganizationalUnit],
+    ) -> dict[str, object | None]:
+        """Resolve caller-defined values from an OU toward the directory root."""
+
+        return resolve_ou_inherited_attributes(ou_dn, rules, ou_tree)
 
     def get_deepest_ou_field(
         self,

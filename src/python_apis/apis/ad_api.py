@@ -28,30 +28,27 @@ _RECOVERABLE_EXCEPTION_NAMES = tuple(exc.__name__ for exc in _RECOVERABLE_EXCEPT
 _SUPPORTED_SEARCH_SCOPES = frozenset((BASE, LEVEL, SUBTREE))
 
 
-def _build_retry_policy(operation_kind: str) -> dict[str, Any]:
-    """Describe the current retry policy for a given operation classification.
+def _build_retry_policy(operation_kind: str, max_retries: int) -> dict[str, Any]:
+    """Describe the configured retry policy for an operation classification."""
 
-    The policy is descriptive (not a control knob in Stage N): every decorated
-    AD operation retries at most once after a rebind when a recoverable
-    transport/session error is raised, so reads and writes currently share the
-    same ``rebind_once`` behavior.
-    """
+    if max_retries == 0:
+        strategy = "no_retry"
+    elif max_retries == 1:
+        strategy = "rebind_once"
+    else:
+        strategy = "bounded_rebind"
 
     return {
         "operation_kind": operation_kind,
-        "max_attempts": 2,
-        "max_retries": 1,
-        "strategy": "rebind_once",
+        "max_attempts": max_retries + 1,
+        "max_retries": max_retries,
+        "strategy": strategy,
         "retry_on": _RECOVERABLE_EXCEPTION_NAMES,
     }
 
 
-AD_READ_RETRY_POLICY = _build_retry_policy("read")
-AD_WRITE_RETRY_POLICY = _build_retry_policy("write")
-_RETRY_POLICY_BY_KIND = {
-    "read": AD_READ_RETRY_POLICY,
-    "write": AD_WRITE_RETRY_POLICY,
-}
+AD_READ_RETRY_POLICY = _build_retry_policy("read", 1)
+AD_WRITE_RETRY_POLICY = _build_retry_policy("write", 0)
 
 
 @dataclass(frozen=True)
@@ -81,20 +78,11 @@ class _ADConnectionOptions:
     page_size: int
     read_retry_count: int
     read_retry_backoff_seconds: float
+    write_retry_count: int
 
 
 def _auto_reconnect(operation_kind: str = "write"):
-    """Build a decorator that retries once after a rebind on recoverable errors.
-
-    ``operation_kind`` (``"read"`` or ``"write"``) selects the descriptive retry
-    policy attached to the recorded :class:`RetryTelemetry`. The control flow is
-    unchanged from the historic behavior: the wrapped method is retried at most
-    once after :meth:`ADConnection.rebind` when a recoverable LDAP
-    session/communication error is raised. Telemetry is recorded for every call
-    (including the no-retry success path) on the connection instance.
-    """
-
-    policy = _RETRY_POLICY_BY_KIND.get(operation_kind, AD_WRITE_RETRY_POLICY)
+    """Build a decorator for bounded retries after recoverable LDAP failures."""
 
     def decorator(method):
         @functools.wraps(method)
@@ -103,21 +91,29 @@ def _auto_reconnect(operation_kind: str = "write"):
             retried = False
             would_retry = False
             recovered = False
+            retry_limit = (
+                self.read_retry_count
+                if operation_kind == "read"
+                else self.write_retry_count
+            )
+            policy = _build_retry_policy(operation_kind, retry_limit)
             try:
-                try:
-                    return method(self, *args, **kwargs)
-                except _RECOVERABLE_EXCEPTIONS as exc:
-                    logger.warning(
-                        "LDAP session error in %s, attempting rebind: %s",
-                        method.__name__, exc,
-                    )
-                    would_retry = True
-                    retried = True
-                    retry_count = 1
-                    self.rebind()
-                    result = method(self, *args, **kwargs)
-                    recovered = True
-                    return result
+                while True:
+                    try:
+                        result = method(self, *args, **kwargs)
+                        recovered = retry_count > 0
+                        return result
+                    except _RECOVERABLE_EXCEPTIONS as exc:
+                        if retry_count >= retry_limit:
+                            raise
+                        would_retry = True
+                        retried = True
+                        retry_count += 1
+                        logger.warning(
+                            "LDAP session error in %s, attempting rebind (%d/%d): %s",
+                            method.__name__, retry_count, retry_limit, exc,
+                        )
+                        self.rebind()
             finally:
                 self._last_retry_telemetry = RetryTelemetry(  # pylint: disable=protected-access
                     operation_kind=operation_kind,
@@ -163,6 +159,7 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         page_size: int = 500,
         read_retry_count: int = 1,
         read_retry_backoff_seconds: float = 0,
+        write_retry_count: int = 0,
     ):
         self._validate_connection_options(
             receive_timeout=receive_timeout,
@@ -170,6 +167,7 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             page_size=page_size,
             read_retry_count=read_retry_count,
             read_retry_backoff_seconds=read_retry_backoff_seconds,
+            write_retry_count=write_retry_count,
         )
         if enable_ldap_logging:
             set_library_log_detail_level(BASIC)
@@ -182,6 +180,7 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             page_size=page_size,
             read_retry_count=read_retry_count,
             read_retry_backoff_seconds=read_retry_backoff_seconds,
+            write_retry_count=write_retry_count,
         )
         self._last_retry_telemetry: RetryTelemetry | None = None
         self.connection = self._get_connection(servers)
@@ -211,14 +210,20 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         """Seconds to wait between recoverable read attempts."""
         return self._options.read_retry_backoff_seconds
 
+    @property
+    def write_retry_count(self) -> int:
+        """Maximum retries for writes; disabled unless explicitly configured."""
+        return self._options.write_retry_count
+
     @staticmethod
-    def _validate_connection_options(
+    def _validate_connection_options(  # pylint: disable=too-many-arguments
         *,
         receive_timeout: float,
         connect_timeout: float | None,
         page_size: int,
         read_retry_count: int,
         read_retry_backoff_seconds: float,
+        write_retry_count: int,
     ) -> None:
         """Validate connection policy before constructing LDAP objects."""
 
@@ -240,6 +245,12 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             or read_retry_count < 0
         ):
             raise ValueError("read_retry_count must be a non-negative integer")
+        if (
+            isinstance(write_retry_count, bool)
+            or not isinstance(write_retry_count, int)
+            or write_retry_count < 0
+        ):
+            raise ValueError("write_retry_count must be a non-negative integer")
         if (
             isinstance(read_retry_backoff_seconds, bool)
             or not isinstance(read_retry_backoff_seconds, (int, float))

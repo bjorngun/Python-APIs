@@ -72,6 +72,7 @@ class TestADConnection(unittest.TestCase):
             page_size=250,
             read_retry_count=3,
             read_retry_backoff_seconds=0.25,
+            write_retry_count=2,
         )
 
         self.assertEqual(conn.receive_timeout, 30)
@@ -79,6 +80,7 @@ class TestADConnection(unittest.TestCase):
         self.assertEqual(conn.page_size, 250)
         self.assertEqual(conn.read_retry_count, 3)
         self.assertEqual(conn.read_retry_backoff_seconds, 0.25)
+        self.assertEqual(conn.write_retry_count, 2)
         mock_server_cls.assert_has_calls([
             call(server, use_ssl=True, tls=ANY, connect_timeout=4.5)
             for server in self.servers
@@ -114,6 +116,7 @@ class TestADConnection(unittest.TestCase):
             ('page_size', {'page_size': 0}),
             ('read_retry_count', {'read_retry_count': -1}),
             ('read_retry_backoff_seconds', {'read_retry_backoff_seconds': -0.1}),
+            ('write_retry_count', {'write_retry_count': -1}),
         ]
 
         for option_name, options in invalid_options:
@@ -425,8 +428,8 @@ class TestAutoReconnect(unittest.TestCase):
         mock_rebind.assert_called_once()
         self.assertEqual(results, [{'cn': 'Complete Result'}])
 
-    def test_modify_retries_on_communication_error(self):
-        ad_conn = ADConnection(self.servers, self.search_base)
+    def test_modify_retries_on_communication_error_when_explicitly_enabled(self):
+        ad_conn = ADConnection(self.servers, self.search_base, write_retry_count=1)
         self.mock_connection.modify.side_effect = [
             LDAPCommunicationError(),
             True,
@@ -439,6 +442,51 @@ class TestAutoReconnect(unittest.TestCase):
         )
 
         self.assertTrue(result['success'])
+
+    def test_modify_does_not_retry_communication_error_by_default(self):
+        ad_conn = ADConnection(self.servers, self.search_base)
+        self.mock_connection.modify.side_effect = LDAPCommunicationError('write response lost')
+
+        with patch.object(ad_conn, 'rebind') as mock_rebind:
+            with self.assertRaises(LDAPCommunicationError):
+                ad_conn.modify(
+                    'CN=John,OU=users,DC=example,DC=com',
+                    [('department', 'IT')],
+                )
+
+        mock_rebind.assert_not_called()
+        self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 0)
+        self.assertEqual(ad_conn.last_retry_telemetry.policy['strategy'], 'no_retry')
+
+    def test_search_respects_zero_read_retries(self):
+        ad_conn = ADConnection(self.servers, self.search_base, read_retry_count=0)
+        self.mock_connection.extend.standard.paged_search.side_effect = LDAPCommunicationError(
+            'read failed'
+        )
+
+        with patch.object(ad_conn, 'rebind') as mock_rebind:
+            with self.assertRaises(LDAPCommunicationError):
+                ad_conn.search('(objectClass=user)', ['cn'])
+
+        mock_rebind.assert_not_called()
+        self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 0)
+
+    def test_search_supports_multiple_bounded_retries(self):
+        ad_conn = ADConnection(self.servers, self.search_base, read_retry_count=2)
+        complete_result = [{'attributes': {'cn': 'Complete Result'}}]
+        self.mock_connection.extend.standard.paged_search.side_effect = [
+            LDAPCommunicationError('first'),
+            LDAPSessionTerminatedByServerError('second'),
+            iter(complete_result),
+        ]
+
+        with patch.object(ad_conn, 'rebind') as mock_rebind:
+            results = ad_conn.search('(objectClass=user)', ['cn'])
+
+        self.assertEqual(results, [{'cn': 'Complete Result'}])
+        self.assertEqual(mock_rebind.call_count, 2)
+        self.assertEqual(ad_conn.last_retry_telemetry.retry_count, 2)
+        self.assertEqual(ad_conn.last_retry_telemetry.policy['max_attempts'], 3)
 
     # -- decorator: non-recoverable errors propagate --------------------
 

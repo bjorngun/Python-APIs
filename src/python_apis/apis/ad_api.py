@@ -7,6 +7,8 @@ this package will need a user that has the required permissions to edit/read the
 AD to run it effectively.
 """
 
+# pylint: disable=too-many-lines
+
 import functools
 import hashlib
 import logging
@@ -17,9 +19,13 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
-from ldap3.utils.log import set_library_log_detail_level, BASIC
+from ldap3.utils.log import (
+    BASIC,
+    set_library_log_detail_level,
+    set_library_log_hide_sensitive_data,
+)
 from ldap3 import (ALL_ATTRIBUTES, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE,
-                   MODIFY_REPLACE, ROUND_ROBIN, SASL, SUBTREE, GSSAPI,
+                   MODIFY_REPLACE, ROUND_ROBIN, SASL, SIMPLE, SUBTREE, GSSAPI,
                    Connection, Server, ServerPool, Tls)
 from ldap3.core.exceptions import (
     LDAPCommunicationError,
@@ -29,7 +35,7 @@ from ldap3.core.exceptions import (
 )
 from ldap3.utils.dn import parse_dn
 
-from python_apis.apis.ad_config import ADTLSConfig
+from python_apis.apis.ad_config import ADAuthenticationMode, ADTLSConfig
 from python_apis.models.ad_get import ADGetResult
 
 logger = logging.getLogger(__name__)
@@ -210,7 +216,7 @@ class ADMissingServersError(Exception):
     """Custom exception for errors related to missing Active Directory servers."""
 
 
-class ADConnection:  # pylint: disable=too-many-public-methods
+class ADConnection:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """This class contains the functionality concerning the
     connection and the methods that gets data from AD and can modify the AD.
 
@@ -233,6 +239,9 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         read_retry_count: int = 1,
         read_retry_backoff_seconds: float = 0,
         write_retry_count: int = 0,
+        authentication: ADAuthenticationMode = "gssapi",
+        username: str | None = None,
+        password: str | None = None,
         tls: ADTLSConfig | None = None,
     ):
         self._validate_connection_options(
@@ -245,8 +254,15 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         )
         if tls is not None and not isinstance(tls, ADTLSConfig):
             raise TypeError("tls must be an ADTLSConfig or None")
+        self._validate_authentication_options(
+            authentication=authentication,
+            username=username,
+            password=password,
+            tls=tls,
+        )
         self._validate_tls_runtime_config(tls)
         if enable_ldap_logging:
+            set_library_log_hide_sensitive_data(True)
             set_library_log_detail_level(BASIC)
 
         self._servers = servers
@@ -261,6 +277,9 @@ class ADConnection:  # pylint: disable=too-many-public-methods
         )
         self._last_retry_telemetry: RetryTelemetry | None = None
         self._selected_server: str | None = None
+        self._authentication = authentication
+        self._username = username
+        self._password = password
         self._tls_config = tls
         if tls is not None and tls.legacy_leaf_key_compatibility:
             logger.warning(
@@ -303,6 +322,20 @@ class ADConnection:  # pylint: disable=too-many-public-methods
     def tls_config(self) -> ADTLSConfig | None:
         """Explicit TLS settings, or ``None`` for historical default behavior."""
         return self._tls_config
+
+    @property
+    def authentication_mode(self) -> ADAuthenticationMode:
+        """Configured authentication mode without exposing credentials."""
+        return self._authentication
+
+    def __repr__(self) -> str:
+        """Return safe connection configuration metadata without directory values."""
+
+        tls_mode = "legacy-default" if self._tls_config is None else "explicit"
+        return (
+            f"ADConnection(authentication={self._authentication!r}, "
+            f"tls={tls_mode!r}, servers={len(self._servers)})"
+        )
 
     @staticmethod
     def _validate_connection_options(  # pylint: disable=too-many-arguments
@@ -393,6 +426,36 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             raise ValueError("Invalid TLS trust or cipher configuration") from exc
 
     @staticmethod
+    def _validate_authentication_options(
+        *,
+        authentication: str,
+        username: str | None,
+        password: str | None,
+        tls: ADTLSConfig | None,
+    ) -> None:
+        """Validate authentication inputs before constructing LDAP objects."""
+
+        if authentication not in ("gssapi", "simple"):
+            raise ValueError("authentication must be 'gssapi' or 'simple'")
+        if authentication == "gssapi":
+            if username is not None or password is not None:
+                raise ValueError("username and password must be omitted for gssapi")
+            return
+        if not isinstance(username, str) or not username.strip():
+            raise ValueError("username must be a non-empty string for simple authentication")
+        if not isinstance(password, str) or not password:
+            raise ValueError("password must be a non-empty string for simple authentication")
+        if tls is None or tls.validate != ssl.CERT_REQUIRED:
+            raise ValueError("simple authentication requires validated TLS")
+
+    @staticmethod
+    def _scrub_bound_simple_credentials(connection: Connection) -> None:
+        """Remove simple-bind credentials from the bound ldap3 representation."""
+
+        connection.user = None
+        connection.password = None
+
+    @staticmethod
     def _secure_server_endpoint(server: str) -> tuple[str, int | None]:
         """Return a host and optional port suitable for validated TLS."""
 
@@ -428,7 +491,7 @@ class ADConnection:  # pylint: disable=too-many-public-methods
             sni=server_host,
         )
 
-    def _get_connection(self, servers: list[str]) -> Connection:
+    def _get_connection(self, servers: list[str]) -> Connection:  # pylint: disable=too-many-locals
         """initializes a connection to the active directory.
         """
         if not servers:
@@ -456,12 +519,22 @@ class ADConnection:  # pylint: disable=too-many-public-methods
 
         server_pool = ServerPool(ldap_servers, ROUND_ROBIN, active=True, exhaust=True)
 
-        connection = Connection(
-            server_pool,
-            authentication=SASL,
-            sasl_mechanism=GSSAPI,
-            receive_timeout=self.receive_timeout,
-        )
+        connection_options: dict[str, Any] = {
+            "receive_timeout": self.receive_timeout,
+        }
+        if self._authentication == "simple":
+            connection_options.update({
+                "authentication": SIMPLE,
+                "user": self._username,
+                "password": self._password,
+                "auto_referrals": False,
+            })
+        else:
+            connection_options.update({
+                "authentication": SASL,
+                "sasl_mechanism": GSSAPI,
+            })
+        connection = Connection(server_pool, **connection_options)
         try:
             bound = connection.bind()
         except LDAPException as exc:
@@ -476,6 +549,8 @@ class ADConnection:  # pylint: disable=too-many-public-methods
                 self._bound_server_identifier(connection)
             )
             raise ADBindError(result_code, controller)
+        if self._authentication == "simple":
+            self._scrub_bound_simple_credentials(connection)
         self._selected_server = self._bound_server_identifier(connection)
         return connection
 

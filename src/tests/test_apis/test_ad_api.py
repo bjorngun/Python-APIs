@@ -10,6 +10,7 @@ from ldap3 import (
     MODIFY_DELETE,
     MODIFY_REPLACE,
     SASL,
+    SIMPLE,
     SUBTREE,
 )
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSessionTerminatedByServerError
@@ -45,6 +46,110 @@ class TestADConnection(unittest.TestCase):
 
         self.assertEqual(conn.search_base, self.search_base)
         self.assertIsNotNone(conn.connection)
+
+    def test_invalid_authentication_fails_before_ldap_construction(self):
+        invalid_options = (
+            {"authentication": "unknown"},
+            {"authentication": "gssapi", "username": "USER_CANARY"},
+            {"authentication": "gssapi", "password": "PASSWORD_CANARY"},
+            {"authentication": "simple", "username": "", "password": "secret"},
+            {"authentication": "simple", "username": "user", "password": ""},
+            {"authentication": "simple", "username": "user", "password": "secret"},
+            {
+                "authentication": "simple",
+                "username": "user",
+                "password": "secret",
+                "tls": ADTLSConfig(validate=ssl.CERT_NONE),
+            },
+        )
+
+        for options in invalid_options:
+            with self.subTest(options=options), patch(
+                'python_apis.apis.ad_api.Server'
+            ) as mock_server_cls, self.assertRaises(ValueError):
+                ADConnection(self.servers, self.search_base, **options)
+
+            mock_server_cls.assert_not_called()
+            self.mock_connection_cls.assert_not_called()
+
+    def test_simple_bind_uses_credentials_and_scrubs_bound_connection(self):
+        username = 'SIMPLE_USER_CANARY'
+        password = 'SIMPLE_PASSWORD_CANARY'
+
+        connection = ADConnection(
+            self.servers,
+            self.search_base,
+            authentication='simple',
+            username=username,
+            password=password,
+            tls=ADTLSConfig.secure(),
+        )
+
+        connection_options = self.mock_connection_cls.call_args.kwargs
+        self.assertEqual(connection_options['authentication'], SIMPLE)
+        self.assertEqual(connection_options['user'], username)
+        self.assertEqual(connection_options['password'], password)
+        self.assertFalse(connection_options['auto_referrals'])
+        self.assertIsNone(self.mock_connection.user)
+        self.assertIsNone(self.mock_connection.password)
+        self.assertEqual(connection.authentication_mode, 'simple')
+        self.assertNotIn(username, repr(connection))
+        self.assertNotIn(password, repr(connection))
+        self.assertNotIn(username, repr(connection.connection))
+        self.assertNotIn(password, repr(connection.connection))
+
+    def test_simple_bind_failure_uses_safe_error(self):
+        self.mock_connection.bind.return_value = False
+        self.mock_connection.result = {
+            'result': 49,
+            'description': 'PASSWORD_CANARY_INVALID',
+        }
+        self.mock_connection.server.host = 'RAW_SERVER_CANARY'
+
+        with self.assertRaises(ADBindError) as captured_error:
+            ADConnection(
+                self.servers,
+                self.search_base,
+                authentication='simple',
+                username='SIMPLE_USER_CANARY',
+                password='SIMPLE_PASSWORD_CANARY',
+                tls=ADTLSConfig.secure(),
+            )
+
+        message = str(captured_error.exception)
+        self.assertNotIn('SIMPLE_USER_CANARY', message)
+        self.assertNotIn('SIMPLE_PASSWORD_CANARY', message)
+        self.assertNotIn('PASSWORD_CANARY_INVALID', message)
+        self.assertNotIn('RAW_SERVER_CANARY', message)
+
+    def test_simple_bind_rebind_reuses_private_credentials(self):
+        connection = ADConnection(
+            self.servers,
+            self.search_base,
+            authentication='simple',
+            username='SIMPLE_USER_CANARY',
+            password='SIMPLE_PASSWORD_CANARY',
+            tls=ADTLSConfig.secure(),
+        )
+        self.mock_connection_cls.reset_mock()
+
+        connection.rebind()
+
+        connection_options = self.mock_connection_cls.call_args.kwargs
+        self.assertEqual(connection_options['user'], 'SIMPLE_USER_CANARY')
+        self.assertEqual(connection_options['password'], 'SIMPLE_PASSWORD_CANARY')
+        self.assertIsNone(connection.connection.user)
+        self.assertIsNone(connection.connection.password)
+
+    @patch('python_apis.apis.ad_api.set_library_log_detail_level')
+    @patch('python_apis.apis.ad_api.set_library_log_hide_sensitive_data')
+    def test_opt_in_ldap_logging_forces_sensitive_data_hiding(
+        self, mock_hide_sensitive, mock_detail_level
+    ):
+        ADConnection(self.servers, self.search_base, enable_ldap_logging=True)
+
+        mock_hide_sensitive.assert_called_once_with(True)
+        mock_detail_level.assert_called_once_with(ANY)
 
     def test_init_no_servers_raises_exception(self):
         with self.assertRaises(ADMissingServersError):

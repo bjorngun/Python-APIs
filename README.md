@@ -293,6 +293,17 @@ cadence was followed before review.
 - [OU inheritance example](examples/ou_inheritance.py) resolves neutral fields and applies returned
    values explicitly without requiring a consumer ORM type.
 
+## Secure AD Authorization
+
+- [Secure AD connections](docs/ad-secure-connection.md) documents explicit validated LDAPS,
+   GSSAPI/simple authentication, timeouts, lifecycle, recovery, and safe diagnostics.
+- [Secure connection opt-in](docs/migration/ad-secure-connection-opt-in.md) explains that omitted
+   TLS preserves existing behavior and shows the per-solution `ADTLSConfig.secure()` adoption path.
+- [Secure connection example](examples/secure_ad_connection.py) reads caller-owned environment and
+   secret-provider values and emits only aggregate success or a stable error code.
+- [Authorization membership](docs/ad-authorization-membership.md) documents fail-closed transitive
+   enabled-user reads and consumer-owned snapshot persistence.
+
 ## Architecture Decision Records
 
 - AD response modernization policy is defined in [ADR 0001](docs/adr/0001-ad-response-modernization.md).
